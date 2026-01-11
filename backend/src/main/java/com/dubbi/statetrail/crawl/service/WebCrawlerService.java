@@ -111,10 +111,8 @@ public class WebCrawlerService {
                 return;
             }
 
-            // Safety default: if domains not specified, restrict to start host
-            if (allowlist.domains().isEmpty() && startUri.getHost() != null && !startUri.getHost().isBlank()) {
-                allowlist = new AllowlistRules(List.of(startUri.getHost()), allowlist.pathPrefixes(), allowlist.deny());
-            }
+            // Note: If allowlist is empty (no domains/paths specified), it allows all URLs.
+            // This enables crawling external sites like example.com without restrictions.
 
             // seed
             var startPage = getOrCreatePage(runId, run.getStartUrl(), 0);
