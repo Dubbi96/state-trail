@@ -31,6 +31,9 @@ public class CrawlPageEntity {
     @Column(nullable = false, length = 2048)
     private String url;
 
+    @Column(name = "url_pattern", length = 2048)
+    private String urlPattern;
+
     @Column(length = 512)
     private String title;
 
@@ -77,6 +80,14 @@ public class CrawlPageEntity {
 
     public String getUrl() {
         return url;
+    }
+
+    public String getUrlPattern() {
+        return urlPattern;
+    }
+
+    public void setUrlPattern(String urlPattern) {
+        this.urlPattern = urlPattern;
     }
 
     public String getTitle() {

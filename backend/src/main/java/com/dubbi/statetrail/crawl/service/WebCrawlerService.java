@@ -8,6 +8,7 @@ import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.Response;
 import com.microsoft.playwright.options.LoadState;
 import com.dubbi.statetrail.common.util.Hashing;
+import com.dubbi.statetrail.common.util.UrlPattern;
 import com.dubbi.statetrail.crawl.domain.CrawlLinkEntity;
 import com.dubbi.statetrail.crawl.domain.CrawlLinkRepository;
 import com.dubbi.statetrail.crawl.domain.CrawlPageEntity;
@@ -385,7 +386,9 @@ public class WebCrawlerService {
         // defensive: use repository to avoid unique constraint violations
         return crawlPageRepository.findByRunIdAndUrl(runId, url).orElseGet(() -> {
             String nodeKey = Hashing.sha256Hex(url);
+            String urlPattern = UrlPattern.normalizeToPattern(url);
             CrawlPageEntity created = new CrawlPageEntity(UUID.randomUUID(), crawlRunRepository.getReferenceById(runId), nodeKey, url, depth);
+            created.setUrlPattern(urlPattern);
             try {
                 return crawlPageRepository.save(created);
             } catch (Exception e) {

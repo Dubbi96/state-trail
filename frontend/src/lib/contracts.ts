@@ -32,6 +32,7 @@ export type GraphNodeDTO = {
   id: Id;
   nodeKey?: string;
   url: string;
+  urlPattern: string;
   title?: string;
   screenshotThumbUrl?: string;
   depth: number;

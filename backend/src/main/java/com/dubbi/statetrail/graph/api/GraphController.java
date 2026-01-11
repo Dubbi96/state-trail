@@ -35,6 +35,7 @@ public class GraphController {
                         p.getId(),
                         p.getNodeKey(),
                         p.getUrl(),
+                        p.getUrlPattern() != null ? p.getUrlPattern() : p.getUrl(),
                         p.getTitle(),
                         null,
                         p.getDepth()

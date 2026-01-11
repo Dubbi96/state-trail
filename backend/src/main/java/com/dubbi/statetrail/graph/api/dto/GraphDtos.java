@@ -13,6 +13,7 @@ public final class GraphDtos {
             UUID id,
             String nodeKey,
             String url,
+            String urlPattern,
             String title,
             String screenshotThumbUrl,
             int depth
