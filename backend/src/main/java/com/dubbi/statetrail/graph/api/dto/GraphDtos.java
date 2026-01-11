@@ -14,7 +14,8 @@ public final class GraphDtos {
             String nodeKey,
             String url,
             String title,
-            String screenshotThumbUrl
+            String screenshotThumbUrl,
+            int depth
     ) {}
 
     public record EdgeDTO(

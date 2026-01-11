@@ -6,7 +6,6 @@ import com.dubbi.statetrail.crawl.domain.CrawlPageRepository;
 import com.dubbi.statetrail.graph.api.dto.GraphDtos.GraphDTO;
 import com.dubbi.statetrail.graph.api.dto.GraphDtos.NodeDTO;
 import com.dubbi.statetrail.graph.api.dto.GraphDtos.EdgeDTO;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
@@ -37,7 +36,8 @@ public class GraphController {
                         p.getNodeKey(),
                         p.getUrl(),
                         p.getTitle(),
-                        null
+                        null,
+                        p.getDepth()
                 ))
                 .toList();
         var edges = crawlLinkRepository.findByRunId(runId).stream()

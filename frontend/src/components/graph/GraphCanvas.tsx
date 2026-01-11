@@ -2,7 +2,30 @@
 
 import { useEffect, useRef } from "react";
 import cytoscape, { Core } from "cytoscape";
+import dagre from "cytoscape-dagre";
 import type { GraphDTO } from "@/lib/contracts";
+
+cytoscape.use(dagre);
+
+function getNodeLabel(url: string, title: string | undefined): string {
+  if (title && title !== "StateTrail") {
+    return title;
+  }
+  try {
+    const urlObj = new URL(url);
+    const path = urlObj.pathname;
+    if (path === "/" || path === "") {
+      return urlObj.hostname;
+    }
+    const segments = path.split("/").filter(Boolean);
+    if (segments.length === 0) return urlObj.hostname;
+    const lastSegment = segments[segments.length - 1];
+    if (segments.length === 1) return lastSegment;
+    return `${segments[0]}/${lastSegment}`;
+  } catch {
+    return url;
+  }
+}
 
 export function GraphCanvas({
   graph,
@@ -80,7 +103,7 @@ export function GraphCanvas({
           }
         }
       ],
-      layout: { name: "cose", animate: false }
+      layout: { name: "dagre", animate: false, nodeSep: 50, rankSep: 100, rankDir: "TB" }
     });
 
     const cy = cyRef.current;
@@ -105,15 +128,26 @@ export function GraphCanvas({
     cy.add([
       ...graph.nodes.map((n) => ({
         group: "nodes" as const,
-        data: { id: n.id, label: n.title || n.url }
+        data: { 
+          id: n.id, 
+          label: getNodeLabel(n.url, n.title),
+          depth: n.depth
+        }
       })),
       ...graph.edges.map((e) => ({
         group: "edges" as const,
-        data: { id: e.id, source: e.from, target: e.to, label: `${e.actionType}` }
+        data: { id: e.id, source: e.from, target: e.to, label: "" }
       }))
     ]);
 
-    cy.layout({ name: "cose", animate: false }).run();
+    cy.layout({ 
+      name: "dagre", 
+      animate: false,
+      nodeSep: 50,
+      rankSep: 100,
+      rankDir: "TB",
+      ranker: "tight-tree"
+    }).run();
   }, [graph]);
 
   useEffect(() => {

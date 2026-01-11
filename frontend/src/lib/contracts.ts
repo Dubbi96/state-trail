@@ -34,6 +34,7 @@ export type GraphNodeDTO = {
   url: string;
   title?: string;
   screenshotThumbUrl?: string;
+  depth: number;
 };
 
 export type GraphEdgeDTO = {
