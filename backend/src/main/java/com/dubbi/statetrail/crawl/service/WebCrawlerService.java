@@ -160,6 +160,9 @@ public class WebCrawlerService {
                     crawlPageRepository.save(current);
 
                     // expand
+                    int linksFound = result.links.size();
+                    int linksAllowed = 0;
+                    int linksEnqueued = 0;
                     for (LinkOut link : result.links) {
                         if (pageByUrl.size() >= budget.maxNodes()) break;
                         if (edges >= budget.maxEdges()) break;
@@ -173,7 +176,10 @@ public class WebCrawlerService {
                         } catch (Exception e) {
                             continue;
                         }
-                        if (!allowlist.allows(toUri)) continue;
+                        if (!allowlist.allows(toUri)) {
+                            continue;
+                        }
+                        linksAllowed++;
 
                         int toDepth = depth + 1;
                         if (toDepth > budget.maxDepth()) continue;
@@ -198,14 +204,23 @@ public class WebCrawlerService {
                         }
 
                         if (!visited.contains(toUrl)) {
+                            linksEnqueued++;
                             if (ordering == CrawlStrategy.MCS) {
                                 mcsScore.put(toUrl, mcsScore.getOrDefault(toUrl, 0) + 1);
                             }
                             offer(ordering, toUrl, bfs, enqueued, mcsScore, mcs, seq);
                         }
                     }
+                    
+                    // Log link extraction stats for debugging
+                    if (linksFound > 0) {
+                        System.out.printf("[Crawl] %s: found %d links, %d allowed, %d enqueued (depth=%d)%n", 
+                            url, linksFound, linksAllowed, linksEnqueued, depth);
+                    }
                 } catch (Exception e) {
                     errors++;
+                    System.err.printf("[Crawl] Error fetching %s: %s%n", url, e.getMessage());
+                    e.printStackTrace();
                 }
 
                 // stats heartbeat
@@ -299,8 +314,12 @@ public class WebCrawlerService {
     }
 
     private static Set<LinkOut> extractLinksFromBrowser(Page page) {
+        // Extract all links including relative URLs - browser will resolve them to absolute URLs
         Object raw = page.evaluate("() => Array.from(document.querySelectorAll('a[href]')).map(a => ({ href: a.href, text: (a.innerText || a.textContent || '').trim().slice(0, 200) }))");
-        if (!(raw instanceof List<?> list)) return Set.of();
+        if (!(raw instanceof List<?> list)) {
+            System.out.println("[Crawl] Browser: No links found or evaluation failed");
+            return Set.of();
+        }
         Set<LinkOut> out = new HashSet<>();
         for (Object item : list) {
             if (!(item instanceof Map<?, ?> m)) continue;
@@ -308,11 +327,15 @@ public class WebCrawlerService {
             if (hrefObj == null) continue;
             String href = String.valueOf(hrefObj);
             if (href.isBlank()) continue;
-            if (!(href.startsWith("http://") || href.startsWith("https://"))) continue;
+            // Browser's a.href is always absolute, so we can accept all http/https URLs
+            if (!(href.startsWith("http://") || href.startsWith("https://"))) {
+                continue;
+            }
             Object textObj = m.get("text");
             String text = textObj == null ? "" : String.valueOf(textObj);
             out.add(new LinkOut(href, text));
         }
+        System.out.printf("[Crawl] Browser: Extracted %d links from page%n", out.size());
         return out;
     }
 
@@ -327,6 +350,7 @@ public class WebCrawlerService {
             if (text != null && text.length() > 200) text = text.substring(0, 200);
             out.add(new LinkOut(href, text));
         }
+        System.out.printf("[Crawl] Jsoup: Extracted %d links from page%n", out.size());
         return out;
     }
 
