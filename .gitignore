@@ -28,6 +28,9 @@ backend/.gradle/
 *.ear
 hs_err_pid*
 
+# Allow Gradle Wrapper (required to run without local Gradle)
+!backend/gradle/wrapper/gradle-wrapper.jar
+
 # OS
 Thumbs.db
 
