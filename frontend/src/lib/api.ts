@@ -43,7 +43,7 @@ export const api = {
     list: (projectId: string) => http<ListResponse<CrawlRunDTO>>(`/api/projects/${projectId}/crawl-runs`),
     create: (
       projectId: string,
-      body: { authProfileId: string; startUrl: string; budget: Record<string, unknown> }
+      body: { authProfileId: string; startUrl: string; budget: Record<string, unknown>; strategy?: string }
     ) => http<CrawlRunDTO>(`/api/projects/${projectId}/crawl-runs`, { method: "POST", body: JSON.stringify(body) })
   },
   graph: {

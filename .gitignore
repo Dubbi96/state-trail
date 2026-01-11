@@ -18,10 +18,14 @@ pnpm-debug.log*
 .idea/
 .vscode/
 *.iml
+.classpath
+.project
+.settings/
 
 # Java/Gradle
 backend/build/
 backend/.gradle/
+backend/bin/
 *.class
 *.jar
 *.war

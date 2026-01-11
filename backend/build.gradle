@@ -1,5 +1,6 @@
 plugins {
     id 'java'
+    id 'eclipse'
     id 'org.springframework.boot' version '3.4.1'
     id 'io.spring.dependency-management' version '1.1.7'
 }
@@ -26,6 +27,7 @@ dependencies {
     runtimeOnly 'org.postgresql:postgresql:42.7.4'
 
     implementation 'org.jsoup:jsoup:1.18.3'
+    implementation 'com.microsoft.playwright:playwright:1.57.0'
 
     // OpenAPI (optional but useful for FE/BE alignment)
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.7.0'
@@ -35,6 +37,14 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+}
+
+tasks.register('playwrightInstall', JavaExec) {
+    group = 'playwright'
+    description = 'Install Playwright Chromium browser binaries'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.microsoft.playwright.CLI'
+    args 'install', 'chromium'
 }
 
 

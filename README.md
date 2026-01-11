@@ -21,6 +21,7 @@ docker compose up -d
 
 ```bash
 cd /Users/gangjong-won/Dubbi/StateTrail/backend
+./gradlew playwrightInstall   # (선택) BROWSER_* 전략 사용 시 1회 설치 권장
 ./gradlew bootRun
 ```
 

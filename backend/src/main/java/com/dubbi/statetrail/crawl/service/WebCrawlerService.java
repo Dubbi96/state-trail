@@ -1,5 +1,12 @@
 package com.dubbi.statetrail.crawl.service;
 
+import com.microsoft.playwright.Browser;
+import com.microsoft.playwright.BrowserContext;
+import com.microsoft.playwright.BrowserType;
+import com.microsoft.playwright.Page;
+import com.microsoft.playwright.Playwright;
+import com.microsoft.playwright.Response;
+import com.microsoft.playwright.options.LoadState;
 import com.dubbi.statetrail.common.util.Hashing;
 import com.dubbi.statetrail.crawl.domain.CrawlLinkEntity;
 import com.dubbi.statetrail.crawl.domain.CrawlLinkRepository;
@@ -26,7 +33,6 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class WebCrawlerService {
@@ -48,9 +54,8 @@ public class WebCrawlerService {
     }
 
     @Async
-    @Transactional
     public void start(UUID runId) {
-        var runOpt = crawlRunRepository.findById(runId);
+        var runOpt = crawlRunRepository.findByIdWithRelations(runId);
         if (runOpt.isEmpty()) return;
 
         var run = runOpt.get();
@@ -64,6 +69,8 @@ public class WebCrawlerService {
         try {
             CrawlBudget budget = CrawlBudget.from(run.getBudget());
             CrawlStrategy strategy = CrawlStrategy.fromNullable(run.getStrategy());
+            boolean browserMode = strategy.isBrowser();
+            CrawlStrategy ordering = strategy.base();
 
             var allowlist = AllowlistRules.from(run.getProject().getAllowlistRules());
             Instant deadline = Instant.now().plus(budget.maxDuration());
@@ -114,13 +121,25 @@ public class WebCrawlerService {
             pageByUrl.put(run.getStartUrl(), startPage);
             depthByUrl.put(run.getStartUrl(), 0);
             eventHub.publish(runId, "NODE", Map.of("id", startPage.getId(), "url", run.getStartUrl(), "depth", 0));
-            offer(strategy, run.getStartUrl(), bfs, enqueued, mcsScore, mcs, seq);
+            offer(ordering, run.getStartUrl(), bfs, enqueued, mcsScore, mcs, seq);
+
+            Playwright playwright = null;
+            Browser browser = null;
+            BrowserContext context = null;
+            Page page = null;
+            try {
+                if (browserMode) {
+                    playwright = Playwright.create();
+                    browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(true));
+                    context = browser.newContext();
+                    page = context.newPage();
+                }
 
             while (Instant.now().isBefore(deadline)) {
                 if (pageByUrl.size() >= budget.maxNodes()) break;
                 if (edges >= budget.maxEdges()) break;
 
-                String url = poll(strategy, bfs, mcsScore, mcs, visited);
+                String url = poll(ordering, bfs, mcsScore, mcs, visited);
                 if (url == null) break;
 
                 if (visited.contains(url)) continue;
@@ -135,32 +154,15 @@ public class WebCrawlerService {
                 CrawlPageEntity current = pageByUrl.computeIfAbsent(url, u -> getOrCreatePage(runId, u, depth));
 
                 try {
-                    Connection.Response res = Jsoup.connect(url)
-                            .userAgent("StateTrailBot/0.1")
-                            .timeout(10_000)
-                            .followRedirects(true)
-                            .ignoreHttpErrors(true)
-                            .ignoreContentType(true)
-                            .execute();
+                    PageFetchResult result = browserMode
+                            ? fetchWithBrowser(page, url)
+                            : fetchWithJsoup(url);
 
-                    String contentType = res.contentType();
-                    Integer status = res.statusCode();
-                    String body = res.body();
-
-                    String title = null;
-                    Set<LinkOut> links = Set.of();
-                    if (contentType != null && contentType.toLowerCase().contains("text/html")) {
-                        Document doc = res.parse();
-                        title = doc.title();
-                        links = extractLinks(doc);
-                    }
-
-                    String snapshot = body == null ? null : (body.length() > 200_000 ? body.substring(0, 200_000) : body);
-                    current.markFetched(status, contentType, title, snapshot);
+                    current.markFetched(result.status, result.contentType, result.title, result.htmlSnapshot);
                     crawlPageRepository.save(current);
 
                     // expand
-                    for (LinkOut link : links) {
+                    for (LinkOut link : result.links) {
                         if (pageByUrl.size() >= budget.maxNodes()) break;
                         if (edges >= budget.maxEdges()) break;
                         if (Instant.now().isAfter(deadline)) break;
@@ -198,10 +200,10 @@ public class WebCrawlerService {
                         }
 
                         if (!visited.contains(toUrl)) {
-                            if (strategy == CrawlStrategy.MCS) {
+                            if (ordering == CrawlStrategy.MCS) {
                                 mcsScore.put(toUrl, mcsScore.getOrDefault(toUrl, 0) + 1);
                             }
-                            offer(strategy, toUrl, bfs, enqueued, mcsScore, mcs, seq);
+                            offer(ordering, toUrl, bfs, enqueued, mcsScore, mcs, seq);
                         }
                     }
                 } catch (Exception e) {
@@ -215,6 +217,12 @@ public class WebCrawlerService {
                     crawlRunRepository.save(run);
                     eventHub.publish(runId, "STATS", stats);
                 }
+            }
+            } finally {
+                if (page != null) page.close();
+                if (context != null) context.close();
+                if (browser != null) browser.close();
+                if (playwright != null) playwright.close();
             }
 
             var finalStats = Map.<String, Object>of(
@@ -238,6 +246,77 @@ public class WebCrawlerService {
 
     private record LinkOut(String href, String anchorText) {}
     private record FrontierItem(String url, int score, long seq) {}
+    private record PageFetchResult(Integer status, String contentType, String title, String htmlSnapshot, Set<LinkOut> links) {}
+
+    private PageFetchResult fetchWithJsoup(String url) throws Exception {
+        Connection.Response res = Jsoup.connect(url)
+                .userAgent("StateTrailBot/0.1")
+                .timeout(10_000)
+                .followRedirects(true)
+                .ignoreHttpErrors(true)
+                .ignoreContentType(true)
+                .execute();
+
+        String contentType = res.contentType();
+        Integer status = res.statusCode();
+        String body = res.body();
+
+        String title = null;
+        Set<LinkOut> links = Set.of();
+        if (contentType != null && contentType.toLowerCase().contains("text/html")) {
+            Document doc = res.parse();
+            title = doc.title();
+            links = extractLinks(doc);
+        }
+
+        String snapshot = body == null ? null : (body.length() > 200_000 ? body.substring(0, 200_000) : body);
+        return new PageFetchResult(status, contentType, title, snapshot, links);
+    }
+
+    private PageFetchResult fetchWithBrowser(Page page, String url) {
+        Response res = page.navigate(url, new Page.NavigateOptions().setTimeout(15_000));
+        page.waitForLoadState(LoadState.DOMCONTENTLOADED);
+        // hydration / client fetch time
+        page.waitForTimeout(700);
+
+        String contentType = null;
+        Integer status = null;
+        if (res != null) {
+            status = res.status();
+            contentType = res.headers().getOrDefault("content-type", null);
+        }
+
+        String title = null;
+        String html = null;
+        try {
+            title = page.title();
+        } catch (Exception ignored) {}
+        try {
+            html = page.content();
+        } catch (Exception ignored) {}
+
+        Set<LinkOut> links = extractLinksFromBrowser(page);
+        String snapshot = html == null ? null : (html.length() > 200_000 ? html.substring(0, 200_000) : html);
+        return new PageFetchResult(status, contentType, title, snapshot, links);
+    }
+
+    private static Set<LinkOut> extractLinksFromBrowser(Page page) {
+        Object raw = page.evaluate("() => Array.from(document.querySelectorAll('a[href]')).map(a => ({ href: a.href, text: (a.innerText || a.textContent || '').trim().slice(0, 200) }))");
+        if (!(raw instanceof List<?> list)) return Set.of();
+        Set<LinkOut> out = new HashSet<>();
+        for (Object item : list) {
+            if (!(item instanceof Map<?, ?> m)) continue;
+            Object hrefObj = m.get("href");
+            if (hrefObj == null) continue;
+            String href = String.valueOf(hrefObj);
+            if (href.isBlank()) continue;
+            if (!(href.startsWith("http://") || href.startsWith("https://"))) continue;
+            Object textObj = m.get("text");
+            String text = textObj == null ? "" : String.valueOf(textObj);
+            out.add(new LinkOut(href, text));
+        }
+        return out;
+    }
 
     private static Set<LinkOut> extractLinks(Document doc) {
         Set<LinkOut> out = new HashSet<>();
