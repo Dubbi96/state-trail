@@ -15,13 +15,17 @@ public final class CrawlRunDtos {
             UUID authProfileId,
             CrawlRunStatus status,
             String startUrl,
-            Map<String, Object> budget
+            Map<String, Object> budget,
+            String strategy,
+            Map<String, Object> stats,
+            String errorMessage
     ) {}
 
     public record CreateCrawlRunRequest(
             @NotNull UUID authProfileId,
             @NotBlank String startUrl,
-            @NotNull Map<String, Object> budget
+            @NotNull Map<String, Object> budget,
+            String strategy
     ) {}
 }
 

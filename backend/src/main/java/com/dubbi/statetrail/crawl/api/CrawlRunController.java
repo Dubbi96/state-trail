@@ -6,6 +6,7 @@ import com.dubbi.statetrail.crawl.api.dto.CrawlRunDtos.CrawlRunDTO;
 import com.dubbi.statetrail.crawl.api.dto.CrawlRunDtos.CreateCrawlRunRequest;
 import com.dubbi.statetrail.crawl.domain.CrawlRunEntity;
 import com.dubbi.statetrail.crawl.domain.CrawlRunRepository;
+import com.dubbi.statetrail.crawl.service.WebCrawlerService;
 import com.dubbi.statetrail.project.domain.ProjectRepository;
 import jakarta.validation.Valid;
 import java.util.UUID;
@@ -23,11 +24,13 @@ public class CrawlRunController {
     private final ProjectRepository projectRepository;
     private final AuthProfileRepository authProfileRepository;
     private final CrawlRunRepository crawlRunRepository;
+    private final WebCrawlerService webCrawlerService;
 
-    public CrawlRunController(ProjectRepository projectRepository, AuthProfileRepository authProfileRepository, CrawlRunRepository crawlRunRepository) {
+    public CrawlRunController(ProjectRepository projectRepository, AuthProfileRepository authProfileRepository, CrawlRunRepository crawlRunRepository, WebCrawlerService webCrawlerService) {
         this.projectRepository = projectRepository;
         this.authProfileRepository = authProfileRepository;
         this.crawlRunRepository = crawlRunRepository;
+        this.webCrawlerService = webCrawlerService;
     }
 
     @GetMapping
@@ -46,7 +49,10 @@ public class CrawlRunController {
         if (!authOpt.get().getProject().getId().equals(projectId)) return ResponseEntity.badRequest().build();
 
         var entity = new CrawlRunEntity(UUID.randomUUID(), projectOpt.get(), authOpt.get(), req.startUrl(), req.budget());
-        return ResponseEntity.ok(toDto(crawlRunRepository.save(entity)));
+        entity.setStrategy(req.strategy());
+        var saved = crawlRunRepository.save(entity);
+        webCrawlerService.start(saved.getId());
+        return ResponseEntity.ok(toDto(saved));
     }
 
     private static CrawlRunDTO toDto(CrawlRunEntity e) {
@@ -56,7 +62,10 @@ public class CrawlRunController {
                 e.getAuthProfile().getId(),
                 e.getStatus(),
                 e.getStartUrl(),
-                e.getBudget()
+                e.getBudget(),
+                e.getStrategy(),
+                e.getStats(),
+                e.getErrorMessage()
         );
     }
 }

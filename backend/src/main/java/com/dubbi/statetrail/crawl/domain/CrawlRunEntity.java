@@ -39,6 +39,9 @@ public class CrawlRunEntity {
     @Column(name = "start_url", nullable = false)
     private String startUrl;
 
+    @Column(name = "strategy")
+    private String strategy;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb", nullable = false)
     private Map<String, Object> budget;
@@ -67,6 +70,7 @@ public class CrawlRunEntity {
         this.authProfile = authProfile;
         this.status = CrawlRunStatus.QUEUED;
         this.startUrl = startUrl;
+        this.strategy = "BFS";
         this.budget = budget;
         this.stats = Map.of("nodes", 0, "edges", 0, "errors", 0);
         this.createdAt = Instant.now();
@@ -92,6 +96,10 @@ public class CrawlRunEntity {
         return startUrl;
     }
 
+    public String getStrategy() {
+        return strategy == null || strategy.isBlank() ? "BFS" : strategy;
+    }
+
     public Map<String, Object> getBudget() {
         return budget;
     }
@@ -102,6 +110,45 @@ public class CrawlRunEntity {
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    public Instant getStartedAt() {
+        return startedAt;
+    }
+
+    public Instant getFinishedAt() {
+        return finishedAt;
+    }
+
+    public String getErrorMessage() {
+        return errorMessage;
+    }
+
+    public void markRunning() {
+        this.status = CrawlRunStatus.RUNNING;
+        this.startedAt = Instant.now();
+    }
+
+    public void markSucceeded(Map<String, Object> stats) {
+        this.status = CrawlRunStatus.SUCCEEDED;
+        this.stats = stats;
+        this.finishedAt = Instant.now();
+    }
+
+    public void markFailed(String errorMessage, Map<String, Object> stats) {
+        this.status = CrawlRunStatus.FAILED;
+        this.errorMessage = errorMessage;
+        this.stats = stats;
+        this.finishedAt = Instant.now();
+    }
+
+    public void updateStats(Map<String, Object> stats) {
+        this.stats = stats;
+    }
+
+    public void setStrategy(String strategy) {
+        if (strategy == null || strategy.isBlank()) return;
+        this.strategy = strategy;
     }
 }
 
