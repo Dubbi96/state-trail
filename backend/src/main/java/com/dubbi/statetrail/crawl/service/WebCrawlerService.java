@@ -73,6 +73,8 @@ public class WebCrawlerService {
             CrawlStrategy ordering = strategy.base();
 
             var allowlist = AllowlistRules.from(run.getProject().getAllowlistRules());
+            System.out.printf("[Crawl] Allowlist config: domains=%s, pathPrefixes=%s, deny=%s%n", 
+                allowlist.domains(), allowlist.pathPrefixes(), allowlist.deny());
             Instant deadline = Instant.now().plus(budget.maxDuration());
 
             // in-memory state

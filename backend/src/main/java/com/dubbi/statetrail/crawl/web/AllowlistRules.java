@@ -23,15 +23,30 @@ public record AllowlistRules(
         String rawPath = uri.getPath();
         String path = (rawPath == null || rawPath.isBlank()) ? "/" : rawPath;
 
-        if (!domains.isEmpty() && domains.stream().noneMatch(d -> host.equalsIgnoreCase(d) || host.endsWith("." + d))) {
-            return false;
+        // If domains list is empty, allow all domains (for external site crawling)
+        if (!domains.isEmpty()) {
+            boolean domainMatch = domains.stream().anyMatch(d -> host.equalsIgnoreCase(d) || host.endsWith("." + d));
+            if (!domainMatch) {
+                System.out.printf("[Allowlist] Domain not allowed: %s (allowed: %s)%n", host, domains);
+                return false;
+            }
         }
-        if (!pathPrefixes.isEmpty() && pathPrefixes.stream().noneMatch(path::startsWith)) {
-            return false;
+        
+        // If pathPrefixes list is empty, allow all paths
+        if (!pathPrefixes.isEmpty()) {
+            boolean pathMatch = pathPrefixes.stream().anyMatch(path::startsWith);
+            if (!pathMatch) {
+                System.out.printf("[Allowlist] Path not allowed: %s (allowed prefixes: %s)%n", path, pathPrefixes);
+                return false;
+            }
         }
+        
+        // Check deny list
         if (!deny.isEmpty() && deny.stream().anyMatch(path::startsWith)) {
+            System.out.printf("[Allowlist] Path denied: %s (deny list: %s)%n", path, deny);
             return false;
         }
+        
         return true;
     }
 
