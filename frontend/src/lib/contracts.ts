@@ -49,6 +49,28 @@ export type GraphDTO = {
   edges: GraphEdgeDTO[];
 };
 
+export type GraphNodeDetailDTO = {
+  id: Id;
+  nodeKey: string;
+  url: string;
+  title: string | null;
+  httpStatus: number | null;
+  contentType: string | null;
+  depth: number;
+  discoveredAt: string;
+  fetchedAt: string | null;
+  htmlSize: number | null;
+  htmlSnippet: string | null;
+};
+
+export type GraphEdgeDetailDTO = {
+  id: Id;
+  from: Id;
+  to: Id;
+  actionType: string;
+  anchorText: string | null;
+};
+
 export type FlowStepDTO = {
   edgeId: Id;
 };

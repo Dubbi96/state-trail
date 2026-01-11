@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { useState } from "react";
 import { api } from "@/lib/api";
 import { GraphCanvas } from "@/components/graph/GraphCanvas";
 import { InspectorPanel } from "@/components/graph/InspectorPanel";
@@ -10,6 +11,8 @@ import { InspectorPanel } from "@/components/graph/InspectorPanel";
 export default function RunGraphPage() {
   const params = useParams<{ runId: string }>();
   const runId = params.runId;
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
   const graphQuery = useQuery({
     queryKey: ["graph", runId],
@@ -38,10 +41,34 @@ export default function RunGraphPage() {
 
       <section className="grid gap-4 lg:grid-cols-[1fr_380px]">
         <div className="rounded-xl border border-slate-200 bg-white p-3">
-          <GraphCanvas graph={graphQuery.data ?? { nodes: [], edges: [] }} />
+          <GraphCanvas
+            graph={graphQuery.data ?? { nodes: [], edges: [] }}
+            selectedNodeId={selectedNodeId}
+            selectedEdgeId={selectedEdgeId}
+            onNodeSelect={(id) => {
+              setSelectedNodeId(id);
+              setSelectedEdgeId(null);
+            }}
+            onEdgeSelect={(id) => {
+              setSelectedEdgeId(id);
+              setSelectedNodeId(null);
+            }}
+            onClearSelection={() => {
+              setSelectedNodeId(null);
+              setSelectedEdgeId(null);
+            }}
+          />
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-3">
-          <InspectorPanel />
+          <InspectorPanel
+            runId={runId}
+            selectedNodeId={selectedNodeId}
+            selectedEdgeId={selectedEdgeId}
+            onClearSelection={() => {
+              setSelectedNodeId(null);
+              setSelectedEdgeId(null);
+            }}
+          />
         </div>
       </section>
     </main>

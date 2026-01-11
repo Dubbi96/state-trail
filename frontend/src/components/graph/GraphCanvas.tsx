@@ -4,9 +4,28 @@ import { useEffect, useRef } from "react";
 import cytoscape, { Core } from "cytoscape";
 import type { GraphDTO } from "@/lib/contracts";
 
-export function GraphCanvas({ graph }: { graph: GraphDTO }) {
+export function GraphCanvas({
+  graph,
+  selectedNodeId,
+  selectedEdgeId,
+  onNodeSelect,
+  onEdgeSelect,
+  onClearSelection
+}: {
+  graph: GraphDTO;
+  selectedNodeId: string | null;
+  selectedEdgeId: string | null;
+  onNodeSelect: (id: string) => void;
+  onEdgeSelect: (id: string) => void;
+  onClearSelection: () => void;
+}) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
+  const handlersRef = useRef({ onNodeSelect, onEdgeSelect, onClearSelection });
+
+  useEffect(() => {
+    handlersRef.current = { onNodeSelect, onEdgeSelect, onClearSelection };
+  }, [onNodeSelect, onEdgeSelect, onClearSelection]);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -31,6 +50,12 @@ export function GraphCanvas({ graph }: { graph: GraphDTO }) {
           }
         },
         {
+          selector: "node.selected",
+          style: {
+            "background-color": "#2563eb"
+          }
+        },
+        {
           selector: "edge",
           style: {
             width: 1,
@@ -45,9 +70,30 @@ export function GraphCanvas({ graph }: { graph: GraphDTO }) {
             "text-background-opacity": 1,
             "text-background-padding": 1
           }
+        },
+        {
+          selector: "edge.selected",
+          style: {
+            "line-color": "#2563eb",
+            "target-arrow-color": "#2563eb",
+            width: 2
+          }
         }
       ],
       layout: { name: "cose", animate: false }
+    });
+
+    const cy = cyRef.current;
+    if (!cy) return;
+
+    cy.on("tap", (evt) => {
+      if (evt.target === cy) handlersRef.current.onClearSelection();
+    });
+    cy.on("tap", "node", (evt) => {
+      handlersRef.current.onNodeSelect(evt.target.id());
+    });
+    cy.on("tap", "edge", (evt) => {
+      handlersRef.current.onEdgeSelect(evt.target.id());
     });
   }, []);
 
@@ -69,6 +115,14 @@ export function GraphCanvas({ graph }: { graph: GraphDTO }) {
 
     cy.layout({ name: "cose", animate: false }).run();
   }, [graph]);
+
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.elements().removeClass("selected");
+    if (selectedNodeId) cy.getElementById(selectedNodeId).addClass("selected");
+    if (selectedEdgeId) cy.getElementById(selectedEdgeId).addClass("selected");
+  }, [selectedNodeId, selectedEdgeId]);
 
   return <div ref={hostRef} className="h-[70vh] w-full" />;
 }

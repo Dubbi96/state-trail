@@ -3,6 +3,8 @@ import type {
   CrawlRunDTO,
   FlowDTO,
   GraphDTO,
+  GraphEdgeDetailDTO,
+  GraphNodeDetailDTO,
   ListResponse,
   ProjectDTO
 } from "@/lib/contracts";
@@ -45,7 +47,9 @@ export const api = {
     ) => http<CrawlRunDTO>(`/api/projects/${projectId}/crawl-runs`, { method: "POST", body: JSON.stringify(body) })
   },
   graph: {
-    get: (runId: string) => http<GraphDTO>(`/api/crawl-runs/${runId}/graph`)
+    get: (runId: string) => http<GraphDTO>(`/api/crawl-runs/${runId}/graph`),
+    getNode: (runId: string, nodeId: string) => http<GraphNodeDetailDTO>(`/api/crawl-runs/${runId}/nodes/${nodeId}`),
+    getEdge: (runId: string, edgeId: string) => http<GraphEdgeDetailDTO>(`/api/crawl-runs/${runId}/edges/${edgeId}`)
   },
   flows: {
     listByRun: (runId: string) => http<ListResponse<FlowDTO>>(`/api/crawl-runs/${runId}/flows`),
