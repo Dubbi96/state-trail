@@ -169,20 +169,28 @@ public class WebCrawlerService {
                         if (Instant.now().isAfter(deadline)) break;
 
                         String toUrl = normalize(url, link.href());
-                        if (toUrl == null) continue;
+                        if (toUrl == null) {
+                            System.out.printf("[Crawl] Failed to normalize link: %s (from %s)%n", link.href(), url);
+                            continue;
+                        }
                         URI toUri;
                         try {
                             toUri = URI.create(toUrl);
                         } catch (Exception e) {
+                            System.out.printf("[Crawl] Failed to create URI from: %s (error: %s)%n", toUrl, e.getMessage());
                             continue;
                         }
                         if (!allowlist.allows(toUri)) {
+                            System.out.printf("[Crawl] Link denied by allowlist: %s%n", toUrl);
                             continue;
                         }
                         linksAllowed++;
 
                         int toDepth = depth + 1;
-                        if (toDepth > budget.maxDepth()) continue;
+                        if (toDepth > budget.maxDepth()) {
+                            System.out.printf("[Crawl] Link exceeds max depth (%d > %d): %s%n", toDepth, budget.maxDepth(), toUrl);
+                            continue;
+                        }
 
                         CrawlPageEntity toPage = pageByUrl.get(toUrl);
                         if (toPage == null) {
@@ -203,8 +211,13 @@ public class WebCrawlerService {
                             }
                         }
 
-                        if (!visited.contains(toUrl)) {
+                        if (visited.contains(toUrl)) {
+                            System.out.printf("[Crawl] Link already visited, skipping: %s%n", toUrl);
+                        } else if (enqueued.contains(toUrl)) {
+                            System.out.printf("[Crawl] Link already enqueued, skipping: %s%n", toUrl);
+                        } else {
                             linksEnqueued++;
+                            System.out.printf("[Crawl] Enqueuing link: %s (depth=%d)%n", toUrl, toDepth);
                             if (ordering == CrawlStrategy.MCS) {
                                 mcsScore.put(toUrl, mcsScore.getOrDefault(toUrl, 0) + 1);
                             }
@@ -392,8 +405,11 @@ public class WebCrawlerService {
             if (enqueued.add(url)) bfs.addLast(url);
             return;
         }
-        int score = mcsScore.getOrDefault(url, 0);
-        mcs.add(new FrontierItem(url, score, seq[0]++));
+        // MCS: only add if not already enqueued
+        if (enqueued.add(url)) {
+            int score = mcsScore.getOrDefault(url, 0);
+            mcs.add(new FrontierItem(url, score, seq[0]++));
+        }
     }
 
     private static String poll(
@@ -403,8 +419,12 @@ public class WebCrawlerService {
             PriorityQueue<FrontierItem> mcs,
             Set<String> visited
     ) {
-        if (strategy == CrawlStrategy.BFS) return bfs.pollFirst();
+        if (strategy == CrawlStrategy.BFS) {
+            String url = bfs.pollFirst();
+            return url;
+        }
 
+        // MCS: poll from priority queue
         while (true) {
             FrontierItem item = mcs.poll();
             if (item == null) return null;
