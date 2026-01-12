@@ -1,0 +1,9 @@
+if git diff --cached --name-only | grep -q "^.env.*$"; then
+    echo "Error: You are trying to commit changes to the .env file."
+    exit 1
+fi
+
+yarn knip --include exports,unresolved,types,enumMembers,duplicates,files
+
+
+yarn lint-staged

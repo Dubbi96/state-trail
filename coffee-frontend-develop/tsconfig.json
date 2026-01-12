@@ -1,0 +1,43 @@
+{
+    "compilerOptions": {
+        "esModuleInterop": true,
+        "target": "ES2020",
+        "useDefineForClassFields": true,
+        "lib": ["ES2020", "DOM", "DOM.Iterable"],
+        "module": "ESNext",
+        "skipLibCheck": true,
+
+        /* Bundler mode */
+        "moduleResolution": "bundler",
+        "allowImportingTsExtensions": true,
+        "resolveJsonModule": true,
+        "isolatedModules": true,
+        "noEmit": true,
+        "jsx": "react-jsx",
+
+        /* Linting */
+        "strict": true,
+        "noUnusedLocals": true,
+        "noImplicitAny": true,
+        "noUnusedParameters": true,
+        "noFallthroughCasesInSwitch": true,
+
+        /* Import Paths */
+        "baseUrl": "./",
+        "paths": {
+            "@/*": ["src/*"],
+            "@apis/*": ["src/apis/*"],
+            "@assets/*": ["src/assets/*"],
+            "@components/*": ["src/components/*"],
+            "@pages/*": ["src/pages/*"],
+            "@routers/*": ["src/routers/*"],
+            "@stores/*": ["src/stores/*"],
+            "@themes/*": ["src/themes/*"],
+            "@typings/*": ["src/typings/*"],
+            "@utils/*": ["src/utils/*"]
+        }
+    },
+    "include": ["src"],
+    "references": [{ "path": "./tsconfig.node.json" }],
+    "types": ["node", "jest", "@testing-library/jest-dom"]
+}

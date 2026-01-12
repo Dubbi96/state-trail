@@ -1089,17 +1089,20 @@ public class WebCrawlerService {
                     }
                     
                     if (accordionPanel) {
-                        // 펼쳐진 패널 내부의 모든 링크 찾기 (더 포괄적으로)
-                        const linkSelectors = [
+                        // 펼쳐진 패널 내부의 모든 클릭 가능한 요소 찾기
+                        // React Router는 onClick 핸들러를 사용하므로 실제 href가 없을 수 있음
+                        const clickableSelectors = [
                             'a[href]',
                             '[class*="ListItemButton"]',
                             '[class*="ListItem-root"]',
                             '[class*="MenuItem"]',
                             '[role="link"]',
-                            '[role="menuitem"]'
+                            '[role="menuitem"]',
+                            // MUI Stack 컴포넌트도 클릭 가능 (React Router navigate 사용)
+                            '[class*="MuiStack-root"]'
                         ];
                         
-                        linkSelectors.forEach(selector => {
+                        clickableSelectors.forEach(selector => {
                             accordionPanel.querySelectorAll(selector).forEach(el => {
                                 try {
                                     // 요소가 실제로 보이는지 확인
@@ -1107,42 +1110,38 @@ public class WebCrawlerService {
                                         return;
                                     }
                                     
+                                    // 커서가 pointer인 요소는 클릭 가능한 것으로 간주
+                                    const style = window.getComputedStyle(el);
+                                    const isClickable = style.cursor === 'pointer' || 
+                                                       el.onclick !== null ||
+                                                       el.getAttribute('onclick') !== null ||
+                                                       el.style.cursor === 'pointer';
+                                    
+                                    if (!isClickable && el.tagName !== 'A') {
+                                        return;
+                                    }
+                                    
                                     let url = null;
-                                    let linkText = '';
+                                    let linkText = (el.innerText || el.textContent || '').trim();
                                     
                                     // href 속성 확인
                                     if (el.tagName === 'A' && el.href) {
                                         url = el.href;
-                                        linkText = (el.innerText || el.textContent || '').trim();
                                     }
                                     // data 속성 확인 (React Router)
                                     else if (el.getAttribute('data-href')) {
                                         url = el.getAttribute('data-href');
-                                        linkText = (el.innerText || el.textContent || '').trim();
                                     }
                                     else if (el.getAttribute('data-to')) {
                                         url = el.getAttribute('data-to');
-                                        linkText = (el.innerText || el.textContent || '').trim();
                                     }
-                                    // onClick이 있는 경우 부모에서 href 찾기
-                                    else if (el.onclick || el.getAttribute('onclick')) {
-                                        let parent = el.parentElement;
-                                        while (parent && parent !== accordionPanel) {
-                                            if (parent.tagName === 'A' && parent.href) {
-                                                url = parent.href;
-                                                linkText = (el.innerText || el.textContent || parent.innerText || parent.textContent || '').trim();
-                                                break;
-                                            }
-                                            parent = parent.parentElement;
-                                        }
-                                    }
-                                    // ListItemButton/MenuItem의 경우 클릭 가능한 요소로 간주하고 텍스트로 URL 추정
-                                    else if (el.classList.contains('MuiListItemButton-root') || 
-                                             el.classList.contains('MuiMenuItem-root') ||
-                                             el.getAttribute('role') === 'menuitem') {
-                                        linkText = (el.innerText || el.textContent || '').trim();
-                                        // 텍스트 기반으로 URL 추정 (예: "요청 목록" -> "/requests")
-                                        // 하지만 이건 신뢰할 수 없으므로 일단 스킵
+                                    // onClick이 있는 경우 - React Router navigate일 가능성이 높음
+                                    // 이 경우 실제 클릭해서 URL 변화를 확인해야 함
+                                    else if (isClickable && linkText) {
+                                        // onClick 핸들러가 있는 경우, 실제 경로를 추정하기 어려움
+                                        // 하지만 텍스트로 경로를 추정할 수 있음 (예: "요청 목록" -> "/requests")
+                                        // 또는 실제 클릭해서 URL 변화를 확인해야 함
+                                        // 여기서는 일단 스킵하고, clickItemsInAccordionAndExtractLinks에서 처리
                                         return;
                                     }
                                     
@@ -1297,16 +1296,87 @@ public class WebCrawlerService {
                             String itemText = (String) textObj;
                             
                             try {
-                                // 항목 클릭 시도
-                                Locator itemLocator = page.getByText(itemText, new Page.GetByTextOptions().setExact(true));
-                                if (itemLocator.isVisible(new Locator.IsVisibleOptions().setTimeout(1000))) {
-                                    String beforeClickUrl = page.url();
-                                    itemLocator.click(new Locator.ClickOptions().setTimeout(3000));
-                                    
-                                    // URL 변화 대기
-                                    page.waitForTimeout(1000);
+                                // 항목 클릭 시도 - 텍스트로 찾기
+                                System.out.printf("[Crawl] Browser: Attempting to click item '%s' in accordion '%s'...%n", itemText, accordionText);
+                                
+                                // 먼저 아코디언 패널 내부에서만 찾기 (범위 제한)
+                                String textEscaped2 = itemText.replace("\\", "\\\\").replace("\"", "\\\"");
+                                String accordionTextEscaped = accordionText.replace("\\", "\\\\").replace("\"", "\\\"");
+                                
+                                // JavaScript로 아코디언 패널 내부의 요소 찾아서 클릭
+                                Object clickResult = page.evaluate(String.format("""
+                                    () => {
+                                        const itemText = "%s";
+                                        const accordionText = "%s";
+                                        
+                                        // 아코디언 버튼 찾기
+                                        let accordionButton = null;
+                                        const buttons = document.querySelectorAll('button, [role="button"]');
+                                        for (const btn of buttons) {
+                                            const btnText = (btn.innerText || btn.textContent || '').trim();
+                                            if (btnText === accordionText) {
+                                                accordionButton = btn;
+                                                break;
+                                            }
+                                        }
+                                        
+                                        if (!accordionButton) return { found: false, clicked: false };
+                                        
+                                        // 아코디언 패널 찾기
+                                        let accordionPanel = accordionButton.closest('.MuiAccordion-root');
+                                        if (!accordionPanel) {
+                                            accordionPanel = accordionButton.parentElement;
+                                            while (accordionPanel && !accordionPanel.classList.contains('MuiAccordion-root')) {
+                                                accordionPanel = accordionPanel.parentElement;
+                                            }
+                                        }
+                                        
+                                        if (!accordionPanel) return { found: false, clicked: false };
+                                        
+                                        // 패널 내부에서 텍스트로 요소 찾기
+                                        const allElements = accordionPanel.querySelectorAll('*');
+                                        for (const el of allElements) {
+                                            const elText = (el.innerText || el.textContent || '').trim();
+                                            if (elText === itemText) {
+                                                // 클릭 가능한 요소인지 확인
+                                                const style = window.getComputedStyle(el);
+                                                const isClickable = style.cursor === 'pointer' || 
+                                                                   el.onclick !== null ||
+                                                                   el.getAttribute('onclick') !== null ||
+                                                                   el.tagName === 'A' ||
+                                                                   el.style.cursor === 'pointer';
+                                                
+                                                if (isClickable && el.offsetParent !== null) {
+                                                    // 클릭 실행
+                                                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                                    el.focus();
+                                                    el.click();
+                                                    
+                                                    // 추가로 이벤트 트리거
+                                                    const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+                                                    el.dispatchEvent(clickEvent);
+                                                    
+                                                    return { found: true, clicked: true };
+                                                }
+                                            }
+                                        }
+                                        
+                                        return { found: false, clicked: false };
+                                    }
+                                """, textEscaped2, accordionTextEscaped));
+                                
+                                boolean clicked = false;
+                                if (clickResult instanceof Map<?, ?>) {
+                                    Map<?, ?> result = (Map<?, ?>) clickResult;
+                                    Object clickedObj = result.get("clicked");
+                                    clicked = clickedObj instanceof Boolean && (Boolean) clickedObj;
+                                }
+                                
+                                if (clicked) {
+                                    // URL 변화 대기 (React Router는 즉시 URL이 바뀌지 않을 수 있음)
+                                    page.waitForTimeout(1500);
                                     try {
-                                        page.waitForLoadState(LoadState.NETWORKIDLE, new Page.WaitForLoadStateOptions().setTimeout(2000));
+                                        page.waitForLoadState(LoadState.NETWORKIDLE, new Page.WaitForLoadStateOptions().setTimeout(3000));
                                     } catch (Exception e) {
                                         // 타임아웃되어도 계속
                                     }
@@ -1314,15 +1384,19 @@ public class WebCrawlerService {
                                     String afterClickUrl = page.url();
                                     
                                     // URL이 변경되었으면 링크로 추가
-                                    if (!afterClickUrl.equals(beforeClickUrl)) {
+                                    if (!afterClickUrl.equals(currentUrl)) {
                                         links.add(new LinkOut(afterClickUrl, itemText));
                                         System.out.printf("[Crawl] Browser: Clicked item '%s' in accordion, navigated to: %s%n", itemText, afterClickUrl);
                                         
                                         // 뒤로 가기 (원래 상태로 복귀)
                                         page.goBack(new Page.GoBackOptions().setTimeout(3000));
                                         page.waitForLoadState(LoadState.DOMCONTENTLOADED);
-                                        page.waitForTimeout(500);
+                                        page.waitForTimeout(1000); // 아코디언이 다시 펼쳐질 시간
+                                    } else {
+                                        System.out.printf("[Crawl] Browser: Clicked item '%s' but URL did not change (might be same page or React Router issue)%n", itemText);
                                     }
+                                } else {
+                                    System.out.printf("[Crawl] Browser: Could not find clickable element with text '%s' in accordion%n", itemText);
                                 }
                             } catch (Exception e) {
                                 // 클릭 실패해도 계속

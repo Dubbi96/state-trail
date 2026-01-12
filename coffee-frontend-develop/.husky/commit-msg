@@ -1,0 +1,18 @@
+BRANCH_NAME=$(git symbolic-ref --short HEAD)
+
+# 브랜치 이름 규칙 확인
+BRANCH_REGEX="^(f|a|config|chore|d|b|r|s)/[a-z]+/[a-zA-Z0-9-]+$"
+if ! [[ "$BRANCH_NAME" =~ $BRANCH_REGEX ]]; then
+  echo "❌ 브랜치 이름이 규칙에 맞지 않습니다. 올바른 형식: (f|a|config|chore|d|b|r|s)/(이름 영어 소문자만 가능))/기능-설명"
+  exit 1
+fi
+
+# 커밋 메시지 규칙 확인
+COMMIT_MSG_FILE=$1
+COMMIT_MSG=$(head -n1 "$COMMIT_MSG_FILE")
+COMMIT_MSG_REGEX="^\[(feat|add|config|chore|docs|bugfix|refactor|style)\] .+$"
+
+if ! [[ "$COMMIT_MSG" =~ $COMMIT_MSG_REGEX ]]; then
+  echo "❌ 커밋 메시지가 규칙에 맞지 않습니다. 올바른 형식: [feat|add|config|chore|docs|bugfix|refactor|style] 커밋 내용"
+  exit 1
+fi
