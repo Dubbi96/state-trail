@@ -86,34 +86,40 @@
 
 ## 향후 구현 계획
 
-### Phase 1: 상태·행동 그래프로 확장 (우선순위: 높음)
+### Phase 1: 상태·행동 그래프로 확장 (우선순위: 높음) ✅ **완료**
 
 **목표**: 페이지 그래프 → 상태/행동 그래프로 전환
 
 **작업 항목**:
 
-1. **엔티티 재설계**
-   - `CrawlPageEntity` → `StateNodeEntity`
-     - `nodeKey`: URL + authContext + UI 시그니처 해시
+1. **엔티티 재설계** ✅
+   - `CrawlPageEntity` 확장
      - `screenshotObjectKey`, `networkLogObjectKey` 추가
      - UI 시그니처 JSON 저장 (CTA 리스트, form 필드, DOM 해시)
-   - `CrawlLinkEntity` → `ActionEdgeEntity`
-     - `actionType`: CLICK/INPUT/SUBMIT/NAVIGATE
+   - `CrawlLinkEntity` 확장
+     - `actionType`: CLICK/INPUT/SUBMIT/NAVIGATE (enum 추가)
      - `locator`, `payload`, `riskTags` JSON 저장
      - `httpEvidence` JSON 저장
+   - `NodeKeyCalculator`: URL + authContext + UI 시그니처 해시 계산 유틸리티
 
-2. **Playwright 기반 탐색기 강화**
-   - 사용자 행동 감지 (버튼 클릭, 폼 입력, 링크 클릭)
-   - 네트워크 요청/응답 로그 수집
-   - 스크린샷 자동 캡처
-   - 예산 및 커버리지 목표에 따른 탐색 종료
+2. **Playwright 기반 탐색기 강화** ✅
+   - UI 시그니처 추출 (`UiSignatureExtractor`)
+   - 네트워크 요청/응답 로그 수집 및 HAR 변환
+   - 스크린샷 자동 캡처 및 MinIO 저장
+   - 예산 및 커버리지 목표에 따른 탐색 종료 (기존 로직 유지)
 
-3. **AuthProfile 확장**
-   - Storage state 업로드 API
-   - 로그인 스크립트 등록/수정 API
+3. **AuthProfile 확장** ✅
+   - Storage state 업로드 API (`PUT /api/projects/{projectId}/auth-profiles/{authProfileId}/storage-state`)
+   - 로그인 스크립트 등록/수정 API (`PUT /api/projects/{projectId}/auth-profiles/{authProfileId}/login-script`)
    - 워커에서 auth 컨텍스트 주입
+     - STORAGE_STATE: MinIO에서 로드하여 임시 파일로 저장 후 Playwright에 주입
+     - SCRIPT_LOGIN: startUrl 이동 후 JavaScript로 로그인 스크립트 실행
 
-**예상 작업 시간**: 2-3주
+4. **MinIO 객체 스토리지 통합** ✅
+   - `ObjectStorageService`: 스크린샷, 네트워크 로그, storage state 저장/로드
+   - Presigned URL 생성 지원
+
+**완료 날짜**: 2025-01-12
 
 ### Phase 2: 그래프 API 및 이벤트 개선 (우선순위: 높음)
 
@@ -256,7 +262,16 @@
 
 ## 참고사항
 
-- 현재 구현은 MVP 스펙의 약 30-40% 수준
-- 가장 중요한 누락 기능: 상태/행동 그래프 모델
-- 다음 주요 마일스톤: Phase 1 완료 후 MVP의 60-70% 달성 가능
+- **Phase 1 완료**: 상태/행동 그래프 모델 기본 구조 완성
+- 현재 구현은 MVP 스펙의 약 **50-60%** 수준 (Phase 1 완료로 증가)
+- 다음 주요 마일스톤: Phase 2 + Phase 6 일부 완료 시 MVP의 70-80% 달성 가능
+
+## 최근 업데이트 (2025-01-12)
+
+### Phase 1 완료 ✅
+- 엔티티 확장 (UI 시그니처, 스크린샷, 네트워크 로그, action 타입 등)
+- Playwright 기반 UI 시그니처 추출 및 네트워크 로그 수집
+- MinIO 객체 스토리지 통합 (스크린샷, HAR 저장)
+- Auth 컨텍스트 주입 (storage state, login script)
+- URL 패턴 기반 노드 그룹화 (이전 작업)
 
