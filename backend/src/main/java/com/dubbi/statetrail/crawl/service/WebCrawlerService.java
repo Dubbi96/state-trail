@@ -1212,6 +1212,7 @@ public class WebCrawlerService {
     
     /**
      * 아코디언 내부의 항목을 클릭하여 링크 발견
+     * FE 코드 기반: Lnb.tsx의 Stack 컴포넌트 구조를 정확히 파악하여 클릭
      */
     private static List<LinkOut> clickItemsInAccordionAndExtractLinks(Page page, String accordionText) {
         List<LinkOut> links = new ArrayList<>();
@@ -1219,14 +1220,15 @@ public class WebCrawlerService {
         try {
             String textEscaped = accordionText.replace("\\", "\\\\").replace("\"", "\\\"");
             String currentUrl = page.url();
+            String baseUrl = currentUrl.split("/", 4)[0] + "//" + currentUrl.split("/", 4)[2]; // origin 추출
             
-            // 아코디언 내부의 클릭 가능한 항목들을 찾아서 클릭하고 URL 변화 확인
+            // 아코디언 내부의 Stack 요소들을 정확히 찾아서 클릭
+            // Lnb.tsx 구조: Accordion > AccordionSummary > AccordionDetails > Stack (각 메뉴 항목)
             Object result = page.evaluate(String.format("""
                 () => {
                     const accordionText = "%s";
                     const items = [];
                     const baseUrl = window.location.origin;
-                    const currentUrl = window.location.href.split('#')[0];
                     
                     // 아코디언 버튼 찾기
                     let accordionButton = null;
@@ -1252,35 +1254,35 @@ public class WebCrawlerService {
                     
                     if (!accordionPanel) return items;
                     
-                    // 패널 내부의 모든 클릭 가능한 항목 찾기
-                    const clickableSelectors = [
-                        '[class*="ListItemButton"]',
-                        '[class*="ListItem-root"]',
-                        '[class*="MenuItem"]',
-                        '[role="menuitem"]',
-                        'a[href]'
-                    ];
+                    // AccordionDetails 내부의 Stack 요소들 찾기 (Lnb.tsx 구조)
+                    const accordionDetails = accordionPanel.querySelector('.MuiAccordionDetails-root, [class*="AccordionDetails"]');
+                    const searchContainer = accordionDetails || accordionPanel;
                     
-                    clickableSelectors.forEach(selector => {
-                        accordionPanel.querySelectorAll(selector).forEach(el => {
-                            // 요소가 실제로 보이는지 확인
-                            if (el.offsetParent === null && el.style.display === 'none') {
-                                return;
-                            }
-                            
-                            const text = (el.innerText || el.textContent || '').trim();
-                            if (text && text.length > 0 && text !== accordionText) {
-                                items.push({
-                                    text: text,
-                                    selector: selector,
-                                    tagName: el.tagName,
-                                    hasHref: el.href ? el.href : null,
-                                    hasDataTo: el.getAttribute('data-to'),
-                                    hasDataHref: el.getAttribute('data-href')
-                                });
-                            }
-                        });
-                    });
+                    // Stack 요소들을 찾기 (React Router navigate 사용)
+                    const stackElements = searchContainer.querySelectorAll('[class*="MuiStack-root"]');
+                    for (const stack of stackElements) {
+                        // Stack이 cursor: pointer인지 확인 (클릭 가능한 메뉴 항목)
+                        const style = window.getComputedStyle(stack);
+                        const isClickable = style.cursor === 'pointer';
+                        
+                        // Stack 내부의 Typography에서 텍스트 추출
+                        const typography = stack.querySelector('[class*="MuiTypography-root"]');
+                        let stackText = '';
+                        if (typography) {
+                            stackText = (typography.innerText || typography.textContent || '').trim();
+                        } else {
+                            stackText = (stack.innerText || stack.textContent || '').trim();
+                        }
+                        
+                        // 클릭 가능하고 텍스트가 있고, 아코디언 제목과 다르면 항목으로 추가
+                        if (isClickable && stackText && stackText.length > 0 && stackText !== accordionText && stack.offsetParent !== null) {
+                            items.push({
+                                text: stackText,
+                                element: stack,
+                                isStack: true
+                            });
+                        }
+                    }
                     
                     return items;
                 }
