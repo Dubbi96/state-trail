@@ -14,7 +14,8 @@ public final class AuthProfileDtos {
             UUID projectId,
             String name,
             AuthProfileType type,
-            Map<String, Object> tags
+            Map<String, Object> tags,
+            String storageStateObjectKey
     ) {}
 
     public record CreateAuthProfileRequest(

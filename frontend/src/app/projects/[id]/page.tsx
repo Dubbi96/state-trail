@@ -86,6 +86,16 @@ export default function ProjectDashboardPage() {
                 </div>
                 {a.type === "STORAGE_STATE" && (
                   <div className="mt-2 space-y-2">
+                    {a.storageStateObjectKey ? (
+                      <div className="rounded-md bg-green-50 border border-green-200 px-2 py-1.5 text-xs">
+                        <div className="text-green-800 font-medium">✓ Storage State 저장됨</div>
+                        <div className="text-green-600 mt-0.5">Object Key: {a.storageStateObjectKey}</div>
+                      </div>
+                    ) : (
+                      <div className="rounded-md bg-yellow-50 border border-yellow-200 px-2 py-1.5 text-xs text-yellow-800">
+                        ⚠ Storage State가 설정되지 않았습니다
+                      </div>
+                    )}
                     {capturingAuthProfileId === a.id ? (
                       <div>
                         <div className="mb-2 text-xs text-slate-600">

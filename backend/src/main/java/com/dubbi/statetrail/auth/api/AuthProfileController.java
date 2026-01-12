@@ -182,7 +182,14 @@ public class AuthProfileController {
     }
 
     private static AuthProfileDTO toDto(AuthProfileEntity e) {
-        return new AuthProfileDTO(e.getId(), e.getProject().getId(), e.getName(), e.getType(), e.getTags());
+        return new AuthProfileDTO(
+                e.getId(),
+                e.getProject().getId(),
+                e.getName(),
+                e.getType(),
+                e.getTags(),
+                e.getStorageStateObjectKey()
+        );
     }
 
     public record UpdateLoginScriptRequest(String script) {}

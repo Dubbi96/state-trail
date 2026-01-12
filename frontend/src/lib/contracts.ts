@@ -15,6 +15,7 @@ export type AuthProfileDTO = {
   name: string;
   type: AuthProfileType;
   tags: Record<string, unknown>;
+  storageStateObjectKey?: string | null;
 };
 
 export type CrawlRunStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
