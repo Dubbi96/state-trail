@@ -9,6 +9,7 @@ import com.microsoft.playwright.Response;
 import com.microsoft.playwright.options.LoadState;
 import com.dubbi.statetrail.common.util.Hashing;
 import com.dubbi.statetrail.common.util.UrlPattern;
+import com.dubbi.statetrail.crawl.web.UiSignatureExtractor;
 import com.dubbi.statetrail.crawl.domain.CrawlLinkEntity;
 import com.dubbi.statetrail.crawl.domain.CrawlLinkRepository;
 import com.dubbi.statetrail.crawl.domain.CrawlPageEntity;
@@ -20,6 +21,7 @@ import com.dubbi.statetrail.crawl.web.CrawlStrategy;
 import java.net.URI;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -160,6 +162,15 @@ public class WebCrawlerService {
                             : fetchWithJsoup(url);
 
                     current.markFetched(result.status, result.contentType, result.title, result.htmlSnapshot);
+                    
+                    // 브라우저 모드인 경우 UI 시그니처 저장 (스크린샷과 네트워크 로그는 나중에 MinIO 저장 서비스 구현 후)
+                    if (browserMode && result.uiSignature() != null && !result.uiSignature().isEmpty()) {
+                        // TODO: 스크린샷과 네트워크 로그를 MinIO에 저장하고 objectKey를 설정
+                        // 현재는 UI 시그니처만 저장
+                        current.setUiSignature(result.uiSignature());
+                        // networkRequests는 나중에 HAR로 변환하여 저장 예정
+                    }
+                    
                     crawlPageRepository.save(current);
 
                     // expand
@@ -275,7 +286,15 @@ public class WebCrawlerService {
 
     private record LinkOut(String href, String anchorText) {}
     private record FrontierItem(String url, int score, long seq) {}
-    private record PageFetchResult(Integer status, String contentType, String title, String htmlSnapshot, Set<LinkOut> links) {}
+    private record PageFetchResult(
+            Integer status, 
+            String contentType, 
+            String title, 
+            String htmlSnapshot, 
+            Set<LinkOut> links,
+            Map<String, Object> uiSignature,
+            List<Map<String, Object>> networkRequests
+    ) {}
 
     private PageFetchResult fetchWithJsoup(String url) throws Exception {
         Connection.Response res = Jsoup.connect(url)
@@ -299,10 +318,22 @@ public class WebCrawlerService {
         }
 
         String snapshot = body == null ? null : (body.length() > 200_000 ? body.substring(0, 200_000) : body);
-        return new PageFetchResult(status, contentType, title, snapshot, links);
+        return new PageFetchResult(status, contentType, title, snapshot, links, Map.of(), List.of());
     }
 
     private PageFetchResult fetchWithBrowser(Page page, String url) {
+        // 네트워크 요청 추적 시작
+        List<Map<String, Object>> networkRequests = new ArrayList<>();
+        
+        page.onRequest(request -> {
+            Map<String, Object> req = new HashMap<>();
+            req.put("url", request.url());
+            req.put("method", request.method());
+            req.put("resourceType", request.resourceType());
+            req.put("headers", request.headers());
+            networkRequests.add(req);
+        });
+        
         Response res = page.navigate(url, new Page.NavigateOptions().setTimeout(15_000));
         page.waitForLoadState(LoadState.DOMCONTENTLOADED);
         // hydration / client fetch time
@@ -324,9 +355,12 @@ public class WebCrawlerService {
             html = page.content();
         } catch (Exception ignored) {}
 
+        // UI 시그니처 추출
+        Map<String, Object> uiSignature = UiSignatureExtractor.extractFromPage(page);
+
         Set<LinkOut> links = extractLinksFromBrowser(page);
         String snapshot = html == null ? null : (html.length() > 200_000 ? html.substring(0, 200_000) : html);
-        return new PageFetchResult(status, contentType, title, snapshot, links);
+        return new PageFetchResult(status, contentType, title, snapshot, links, uiSignature, networkRequests);
     }
 
     private static Set<LinkOut> extractLinksFromBrowser(Page page) {

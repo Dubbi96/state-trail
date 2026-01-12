@@ -89,6 +89,16 @@ public class AuthProfileEntity {
     public String getLoginScript() {
         return loginScript;
     }
+
+    public void setStorageStateObjectKey(String storageStateObjectKey) {
+        this.storageStateObjectKey = storageStateObjectKey;
+        this.updatedAt = Instant.now();
+    }
+
+    public void setLoginScript(String loginScript) {
+        this.loginScript = loginScript;
+        this.updatedAt = Instant.now();
+    }
 }
 
 
