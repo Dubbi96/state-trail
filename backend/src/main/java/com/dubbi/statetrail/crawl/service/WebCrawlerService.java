@@ -504,8 +504,17 @@ public class WebCrawlerService {
             networkRequests.add(req);
         });
         
-        Response res = page.navigate(url, new Page.NavigateOptions().setTimeout(15_000));
-        page.waitForLoadState(LoadState.DOMCONTENTLOADED);
+        // 이미 해당 URL에 있으면 navigate하지 않음 (중복 navigate 방지)
+        String currentPageUrl = page.url();
+        Response res = null;
+        if (!currentPageUrl.equals(url) && !currentPageUrl.equals(url + "/") && !(currentPageUrl + "/").equals(url)) {
+            res = page.navigate(url, new Page.NavigateOptions().setTimeout(15_000));
+            page.waitForLoadState(LoadState.DOMCONTENTLOADED);
+        } else {
+            // 이미 해당 페이지에 있음
+            System.out.printf("[Crawl] Browser: Already on %s, using current page%n", url);
+        }
+        
         // SPA hydration / client fetch time - React 앱이 완전히 렌더링될 때까지 대기
         page.waitForTimeout(3000);
         // 네트워크가 안정될 때까지 추가 대기 (API 호출 완료 대기)
@@ -1455,15 +1464,49 @@ public class WebCrawlerService {
                                         links.add(new LinkOut(afterClickUrl, itemText));
                                         System.out.printf("[Crawl] Browser: ✓ Clicked item '%s' in accordion '%s', navigated to: %s%n", itemText, accordionText, afterClickUrl);
                                         
-                                        // 뒤로 가기 (원래 상태로 복귀)
-                                        page.goBack(new Page.GoBackOptions().setTimeout(5000));
-                                        page.waitForLoadState(LoadState.DOMCONTENTLOADED);
-                                        page.waitForTimeout(2000); // 아코디언이 다시 펼쳐질 시간
+                                        // 중요: 뒤로 가기하지 않고 그 페이지에서 계속 탐색
+                                        // 각 페이지는 독립적으로 큐에 들어가서 나중에 탐색됨
+                                        // 현재 URL 업데이트 (새 페이지로 이동했으므로)
+                                        currentUrl = afterClickUrl;
                                         
-                                        // 현재 URL 업데이트 (뒤로 가기 후)
-                                        currentUrl = page.url();
+                                        // 새 페이지에서 아코디언이 다시 펼쳐져 있는지 확인하고, 필요하면 다시 펼침
+                                        page.waitForTimeout(1000);
+                                        
+                                        // 아코디언이 닫혀있으면 다시 펼치기
+                                        String accordionTextEscaped2 = accordionText.replace("\\", "\\\\").replace("\"", "\\\"");
+                                        Object accordionExpanded = page.evaluate(String.format("""
+                                            () => {
+                                                const accordionText = "%s";
+                                                const buttons = document.querySelectorAll('button, [role="button"]');
+                                                for (const btn of buttons) {
+                                                    const btnText = (btn.innerText || btn.textContent || '').trim();
+                                                    if (btnText === accordionText) {
+                                                        const expanded = btn.getAttribute('aria-expanded') === 'true' ||
+                                                                       btn.closest('[aria-expanded="true"]') !== null ||
+                                                                       btn.closest('.Mui-expanded') !== null;
+                                                        if (!expanded) {
+                                                            btn.click();
+                                                            return true; // 클릭했음
+                                                        }
+                                                        return false; // 이미 펼쳐져 있음
+                                                    }
+                                                }
+                                                return false;
+                                            }
+                                        """, accordionTextEscaped2));
+                                        
+                                        if (accordionExpanded instanceof Boolean && (Boolean) accordionExpanded) {
+                                            page.waitForTimeout(500); // 아코디언 펼쳐질 시간
+                                        }
                                     } else {
-                                        System.out.printf("[Crawl] Browser: ✗ Clicked item '%s' but URL did not change (current: %s)%n", itemText, currentUrl);
+                                        System.out.printf("[Crawl] Browser: ✗ Clicked item '%s' but URL did not change (current: %s, target might be same page)%n", itemText, currentUrl);
+                                        // URL이 변경되지 않았지만, 이미 그 페이지에 있는 것일 수 있음
+                                        // 이 경우도 링크로 추가 (중복 체크는 나중에)
+                                        // 하지만 현재 URL과 같으면 스킵
+                                        if (!currentUrl.endsWith("/") && !currentUrl.equals(afterClickUrl)) {
+                                            // 경로가 다를 수 있음 (예: /village-heads vs /village-heads/)
+                                            links.add(new LinkOut(afterClickUrl, itemText));
+                                        }
                                     }
                                 } else {
                                     System.out.printf("[Crawl] Browser: ✗ Could not find/click element with text '%s' in accordion%n", itemText);
