@@ -262,9 +262,9 @@
 
 ## 참고사항
 
-- **Phase 1 완료**: 상태/행동 그래프 모델 기본 구조 완성
-- 현재 구현은 MVP 스펙의 약 **50-60%** 수준 (Phase 1 완료로 증가)
-- 다음 주요 마일스톤: Phase 2 + Phase 6 일부 완료 시 MVP의 70-80% 달성 가능
+- **Phase 1, 2, 6 완료**: 상태/행동 그래프 모델 기본 구조 완성, 그래프 API 및 프론트엔드 고도화
+- 현재 구현은 MVP 스펙의 약 **60-70%** 수준 (Phase 2, 6 완료로 증가)
+- 다음 주요 마일스톤: Phase 3 (플로우 마이닝) 완료 시 MVP의 80-90% 달성 가능
 
 ## 최근 업데이트 (2025-01-12)
 
@@ -274,4 +274,16 @@
 - MinIO 객체 스토리지 통합 (스크린샷, HAR 저장)
 - Auth 컨텍스트 주입 (storage state, login script)
 - URL 패턴 기반 노드 그룹화 (이전 작업)
+
+### Phase 2 완료 ✅
+- GraphDTO 확장 (UI 시그니처 요약, 스크린샷 썸네일, 리스크 태그, 메타데이터)
+- GraphInspectorDTO 확장 (스크린샷 원본, 네트워크 로그 URL, 전체 UI 시그니처)
+- 이벤트 타입 확장 (NODE_CREATED, EDGE_CREATED)
+- UiSignatureSummary 유틸리티 (시각화용 요약 생성)
+
+### Phase 6 완료 ✅
+- InspectorPanel 개선 (스크린샷 표시, 네트워크 로그 다운로드, UI 시그니처 시각화)
+- SSE 이벤트 구독 API 추가
+- 실시간 그래프 업데이트 (NODE_CREATED, EDGE_CREATED 이벤트 수신)
+- TypeScript 타입 안정성 개선
 
