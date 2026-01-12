@@ -191,27 +191,23 @@ public class WebCrawlerService {
                         }
                     }
                     
-                    // Storage state가 있으면 파일 경로로 주입, 없으면 기본 컨텍스트 생성
-                    if (tempStorageStatePath != null) {
-                        context = browser.newContext(new Browser.NewContextOptions()
-                                .setStorageStatePath(tempStorageStatePath));
-                    } else {
-                        context = browser.newContext();
-                    }
-                    
                     // 브라우저 컨텍스트 옵션 설정 (더 나은 상태 감지를 위해)
-                    BrowserContext.NewContextOptions contextOptions = new BrowserContext.NewContextOptions()
+                    Browser.NewContextOptions baseContextOptions = new Browser.NewContextOptions()
                             .setViewportSize(1280, 720)
                             .setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
                     
-                    if (context == null) {
-                        context = browser.newContext(contextOptions);
+                    // Storage state가 있으면 파일 경로로 주입, 없으면 기본 컨텍스트 생성
+                    if (tempStorageStatePath != null) {
+                        context = browser.newContext(baseContextOptions
+                                .setStorageStatePath(tempStorageStatePath));
+                    } else {
+                        context = browser.newContext(baseContextOptions);
                     }
                     
                     page = context.newPage();
                     
                     // 디버깅을 위한 로깅
-                    System.out.printf("[Crawl] Browser launched in non-headless mode (visible window)%n");
+                    System.out.printf("[Crawl] Browser launched in non-headless mode (visible window) for better state change detection%n");
                     
                     // SCRIPT_LOGIN 타입인 경우 로그인 스크립트 실행
                     if (run.getAuthProfile() != null && page != null) {
