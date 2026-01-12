@@ -7,9 +7,15 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.UniqueConstraint;
+import com.dubbi.statetrail.crawl.web.ActionType;
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(
@@ -35,6 +41,25 @@ public class CrawlLinkEntity {
 
     @Column(name = "anchor_text", length = 512)
     private String anchorText;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "action_type")
+    private ActionType actionType;
+
+    @Column(length = 512)
+    private String locator;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private Map<String, Object> payload;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "risk_tags", columnDefinition = "jsonb")
+    private Map<String, Object> riskTags;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "http_evidence", columnDefinition = "jsonb")
+    private Map<String, Object> httpEvidence;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
@@ -68,6 +93,46 @@ public class CrawlLinkEntity {
 
     public String getAnchorText() {
         return anchorText;
+    }
+
+    public ActionType getActionType() {
+        return actionType;
+    }
+
+    public void setActionType(ActionType actionType) {
+        this.actionType = actionType;
+    }
+
+    public String getLocator() {
+        return locator;
+    }
+
+    public void setLocator(String locator) {
+        this.locator = locator;
+    }
+
+    public Map<String, Object> getPayload() {
+        return payload;
+    }
+
+    public void setPayload(Map<String, Object> payload) {
+        this.payload = payload;
+    }
+
+    public Map<String, Object> getRiskTags() {
+        return riskTags;
+    }
+
+    public void setRiskTags(Map<String, Object> riskTags) {
+        this.riskTags = riskTags;
+    }
+
+    public Map<String, Object> getHttpEvidence() {
+        return httpEvidence;
+    }
+
+    public void setHttpEvidence(Map<String, Object> httpEvidence) {
+        this.httpEvidence = httpEvidence;
     }
 }
 

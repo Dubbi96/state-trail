@@ -9,7 +9,10 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(
@@ -54,6 +57,16 @@ public class CrawlPageEntity {
 
     @Column(name = "html_snapshot", columnDefinition = "text")
     private String htmlSnapshot;
+
+    @Column(name = "screenshot_object_key", length = 512)
+    private String screenshotObjectKey;
+
+    @Column(name = "network_log_object_key", length = 512)
+    private String networkLogObjectKey;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "ui_signature", columnDefinition = "jsonb")
+    private Map<String, Object> uiSignature;
 
     protected CrawlPageEntity() {}
 
@@ -118,12 +131,42 @@ public class CrawlPageEntity {
         return htmlSnapshot;
     }
 
+    public String getScreenshotObjectKey() {
+        return screenshotObjectKey;
+    }
+
+    public void setScreenshotObjectKey(String screenshotObjectKey) {
+        this.screenshotObjectKey = screenshotObjectKey;
+    }
+
+    public String getNetworkLogObjectKey() {
+        return networkLogObjectKey;
+    }
+
+    public void setNetworkLogObjectKey(String networkLogObjectKey) {
+        this.networkLogObjectKey = networkLogObjectKey;
+    }
+
+    public Map<String, Object> getUiSignature() {
+        return uiSignature;
+    }
+
+    public void setUiSignature(Map<String, Object> uiSignature) {
+        this.uiSignature = uiSignature;
+    }
+
     public void markFetched(Integer httpStatus, String contentType, String title, String htmlSnapshot) {
         this.httpStatus = httpStatus;
         this.contentType = contentType;
         this.title = title;
         this.htmlSnapshot = htmlSnapshot;
         this.fetchedAt = Instant.now();
+    }
+
+    public void markStateCaptured(String screenshotObjectKey, String networkLogObjectKey, Map<String, Object> uiSignature) {
+        this.screenshotObjectKey = screenshotObjectKey;
+        this.networkLogObjectKey = networkLogObjectKey;
+        this.uiSignature = uiSignature;
     }
 }
 
