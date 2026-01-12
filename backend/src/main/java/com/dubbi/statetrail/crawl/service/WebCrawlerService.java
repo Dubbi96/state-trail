@@ -1292,8 +1292,8 @@ public class WebCrawlerService {
             if (result instanceof List<?>) {
                 int itemCount = ((List<?>) result).size();
                 System.out.printf("[Crawl] Browser: Found %d clickable items in accordion '%s'%n", itemCount, accordionText);
-                int maxClicks = Math.min(10, itemCount); // 최대 10개까지 클릭 (더 많이 시도)
-                for (int i = 0; i < maxClicks; i++) {
+                // 모든 항목을 클릭 (제한 없음)
+                for (int i = 0; i < itemCount; i++) {
                     Object itemObj = ((List<?>) result).get(i);
                     if (itemObj instanceof Map<?, ?>) {
                         Map<?, ?> item = (Map<?, ?>) itemObj;
@@ -1357,8 +1357,8 @@ public class WebCrawlerService {
                                                 stackText = (stack.innerText || stack.textContent || '').trim();
                                             }
                                             
-                                            // 텍스트가 정확히 일치하거나 포함되어 있으면
-                                            if (stackText === itemText || stackText.includes(itemText) || itemText.includes(stackText)) {
+                                            // 텍스트가 정확히 일치하면 (FE 코드 기반 정확한 매칭)
+                                            if (stackText === itemText) {
                                                 // 클릭 가능한 요소인지 확인 (cursor: pointer)
                                                 const style = window.getComputedStyle(stack);
                                                 const isClickable = style.cursor === 'pointer' || 
@@ -1429,8 +1429,19 @@ public class WebCrawlerService {
                                 }
                                 
                                 if (clicked) {
-                                    // URL 변화 대기 (React Router는 즉시 URL이 바뀌지 않을 수 있음)
-                                    page.waitForTimeout(1500);
+                                    // URL 변화 대기 (React Router는 history.pushState를 사용하므로 즉시 바뀔 수 있음)
+                                    page.waitForTimeout(2000); // 더 길게 대기
+                                    
+                                    // URL 변화를 기다림
+                                    try {
+                                        // React Router는 history.pushState를 사용하므로 URL이 즉시 바뀔 수 있음
+                                        page.waitForFunction("() => window.location.href !== arguments[0]", currentUrl, 
+                                                new Page.WaitForFunctionOptions().setTimeout(5000));
+                                    } catch (Exception e) {
+                                        // 타임아웃되어도 계속 (URL이 이미 바뀌었을 수 있음)
+                                    }
+                                    
+                                    page.waitForTimeout(1000);
                                     try {
                                         page.waitForLoadState(LoadState.NETWORKIDLE, new Page.WaitForLoadStateOptions().setTimeout(3000));
                                     } catch (Exception e) {
@@ -1442,17 +1453,20 @@ public class WebCrawlerService {
                                     // URL이 변경되었으면 링크로 추가
                                     if (!afterClickUrl.equals(currentUrl)) {
                                         links.add(new LinkOut(afterClickUrl, itemText));
-                                        System.out.printf("[Crawl] Browser: Clicked item '%s' in accordion, navigated to: %s%n", itemText, afterClickUrl);
+                                        System.out.printf("[Crawl] Browser: ✓ Clicked item '%s' in accordion '%s', navigated to: %s%n", itemText, accordionText, afterClickUrl);
                                         
                                         // 뒤로 가기 (원래 상태로 복귀)
-                                        page.goBack(new Page.GoBackOptions().setTimeout(3000));
+                                        page.goBack(new Page.GoBackOptions().setTimeout(5000));
                                         page.waitForLoadState(LoadState.DOMCONTENTLOADED);
-                                        page.waitForTimeout(1000); // 아코디언이 다시 펼쳐질 시간
+                                        page.waitForTimeout(2000); // 아코디언이 다시 펼쳐질 시간
+                                        
+                                        // 현재 URL 업데이트 (뒤로 가기 후)
+                                        currentUrl = page.url();
                                     } else {
-                                        System.out.printf("[Crawl] Browser: Clicked item '%s' but URL did not change (might be same page or React Router issue)%n", itemText);
+                                        System.out.printf("[Crawl] Browser: ✗ Clicked item '%s' but URL did not change (current: %s)%n", itemText, currentUrl);
                                     }
                                 } else {
-                                    System.out.printf("[Crawl] Browser: Could not find clickable element with text '%s' in accordion%n", itemText);
+                                    System.out.printf("[Crawl] Browser: ✗ Could not find/click element with text '%s' in accordion%n", itemText);
                                 }
                             } catch (Exception e) {
                                 // 클릭 실패해도 계속
