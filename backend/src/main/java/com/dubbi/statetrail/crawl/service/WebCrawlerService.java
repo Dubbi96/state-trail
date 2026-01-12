@@ -472,13 +472,15 @@ public class WebCrawlerService {
         Response res = page.navigate(url, new Page.NavigateOptions().setTimeout(15_000));
         page.waitForLoadState(LoadState.DOMCONTENTLOADED);
         // SPA hydration / client fetch time - React 앱이 완전히 렌더링될 때까지 대기
-        page.waitForTimeout(2000);
+        page.waitForTimeout(3000);
         // 네트워크가 안정될 때까지 추가 대기 (API 호출 완료 대기)
         try {
             page.waitForLoadState(LoadState.NETWORKIDLE, new Page.WaitForLoadStateOptions().setTimeout(5_000));
         } catch (Exception e) {
             // 타임아웃되어도 계속 진행
         }
+        // React Router가 완전히 초기화될 때까지 추가 대기
+        page.waitForTimeout(1000);
 
         String contentType = null;
         Integer status = null;
