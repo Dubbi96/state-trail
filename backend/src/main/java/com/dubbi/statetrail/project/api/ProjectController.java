@@ -1,12 +1,16 @@
 package com.dubbi.statetrail.project.api;
 
+import com.dubbi.statetrail.auth.domain.AuthProfileRepository;
 import com.dubbi.statetrail.common.dto.ListResponse;
+import com.dubbi.statetrail.crawl.domain.CrawlRunRepository;
+import com.dubbi.statetrail.flow.domain.FlowRepository;
 import com.dubbi.statetrail.project.api.dto.ProjectDtos.CreateProjectRequest;
 import com.dubbi.statetrail.project.api.dto.ProjectDtos.ProjectDTO;
 import com.dubbi.statetrail.project.api.dto.ProjectDtos.UpdateProjectRequest;
 import com.dubbi.statetrail.project.domain.ProjectEntity;
 import com.dubbi.statetrail.project.domain.ProjectRepository;
 import jakarta.validation.Valid;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -22,9 +26,20 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/projects")
 public class ProjectController {
     private final ProjectRepository projectRepository;
+    private final AuthProfileRepository authProfileRepository;
+    private final CrawlRunRepository crawlRunRepository;
+    private final FlowRepository flowRepository;
 
-    public ProjectController(ProjectRepository projectRepository) {
+    public ProjectController(
+            ProjectRepository projectRepository,
+            AuthProfileRepository authProfileRepository,
+            CrawlRunRepository crawlRunRepository,
+            FlowRepository flowRepository
+    ) {
         this.projectRepository = projectRepository;
+        this.authProfileRepository = authProfileRepository;
+        this.crawlRunRepository = crawlRunRepository;
+        this.flowRepository = flowRepository;
     }
 
     @GetMapping
@@ -56,12 +71,43 @@ public class ProjectController {
     }
 
     @DeleteMapping("/{projectId}")
-    public ResponseEntity<Void> delete(@PathVariable UUID projectId) {
-        if (projectRepository.existsById(projectId)) {
-            projectRepository.deleteById(projectId);
-            return ResponseEntity.noContent().build();
+    public ResponseEntity<Map<String, Object>> delete(@PathVariable UUID projectId) {
+        var projectOpt = projectRepository.findById(projectId);
+        if (projectOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
         }
-        return ResponseEntity.notFound().build();
+        
+        // 관련된 데이터 삭제 순서 (외래 키 제약 조건을 고려)
+        // 1. Flows 삭제 (crawl_run 참조)
+        var flows = flowRepository.findByProjectId(projectId);
+        if (!flows.isEmpty()) {
+            flowRepository.deleteAll(flows);
+        }
+        
+        // 2. CrawlRuns 삭제 (auth_profile, project 참조)
+        var crawlRuns = crawlRunRepository.findByProjectId(projectId);
+        if (!crawlRuns.isEmpty()) {
+            crawlRunRepository.deleteAll(crawlRuns);
+        }
+        
+        // 3. AuthProfiles 삭제 (project 참조)
+        var authProfiles = authProfileRepository.findByProjectId(projectId);
+        if (!authProfiles.isEmpty()) {
+            authProfileRepository.deleteAll(authProfiles);
+        }
+        
+        // 4. Project 삭제
+        projectRepository.deleteById(projectId);
+        
+        return ResponseEntity.ok(Map.of(
+                "ok", true,
+                "message", String.format(
+                        "프로젝트와 함께 %d개의 Auth Profile, %d개의 Crawl Run, %d개의 Flow가 삭제되었습니다.",
+                        authProfiles.size(),
+                        crawlRuns.size(),
+                        flows.size()
+                )
+        ));
     }
 
     private static ProjectDTO toDto(ProjectEntity e) {

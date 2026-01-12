@@ -33,7 +33,7 @@ export const api = {
     get: (projectId: string) => http<ProjectDTO>(`/api/projects/${projectId}`),
     create: (body: { name: string; baseUrl: string; allowlistRules: Record<string, unknown> }) =>
       http<ProjectDTO>(`/api/projects`, { method: "POST", body: JSON.stringify(body) }),
-    delete: (projectId: string) => http<void>(`/api/projects/${projectId}`, { method: "DELETE" })
+    delete: (projectId: string) => http<{ ok: boolean; message: string }>(`/api/projects/${projectId}`, { method: "DELETE" })
   },
   authProfiles: {
     list: (projectId: string) => http<ListResponse<AuthProfileDTO>>(`/api/projects/${projectId}/auth-profiles`),
@@ -67,7 +67,7 @@ export const api = {
       );
     },
     delete: (projectId: string, authProfileId: string) => {
-      return http<void>(
+      return http<{ ok: boolean; message: string }>(
         `/api/projects/${projectId}/auth-profiles/${authProfileId}`,
         { method: "DELETE" }
       );

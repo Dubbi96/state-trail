@@ -70,9 +70,10 @@ export default function ProjectDashboardPage() {
                   <button
                     className="rounded-md border border-red-200 px-2 py-1 text-xs text-red-700 hover:bg-red-50"
                     onClick={async () => {
-                      if (confirm(`정말 ${a.name}을(를) 삭제하시겠습니까?`)) {
+                      if (confirm(`정말 ${a.name}을(를) 삭제하시겠습니까?\n관련된 모든 Crawl Run도 함께 삭제됩니다.`)) {
                         try {
-                          await api.authProfiles.delete(projectId, a.id);
+                          const result = await api.authProfiles.delete(projectId, a.id);
+                          alert(result.message || "Auth Profile이 삭제되었습니다.");
                           authProfilesQuery.refetch();
                         } catch (err: any) {
                           alert(`삭제 실패: ${err.message || err}`);

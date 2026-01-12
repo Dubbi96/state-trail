@@ -11,6 +11,9 @@ public interface CrawlRunRepository extends JpaRepository<CrawlRunEntity, UUID> 
     @Query("select r from CrawlRunEntity r where r.project.id = :projectId order by r.createdAt desc")
     List<CrawlRunEntity> findByProjectId(@Param("projectId") UUID projectId);
 
+    @Query("select r from CrawlRunEntity r where r.authProfile.id = :authProfileId")
+    List<CrawlRunEntity> findByAuthProfileId(@Param("authProfileId") UUID authProfileId);
+
     @Query("""
             select r from CrawlRunEntity r
             join fetch r.project p

@@ -7,6 +7,7 @@ import com.dubbi.statetrail.auth.domain.AuthProfileRepository;
 import com.dubbi.statetrail.auth.service.StorageStateCaptureService;
 import com.dubbi.statetrail.common.dto.ListResponse;
 import com.dubbi.statetrail.common.storage.ObjectStorageService;
+import com.dubbi.statetrail.crawl.domain.CrawlRunRepository;
 import com.dubbi.statetrail.project.domain.ProjectRepository;
 import java.util.Map;
 import jakarta.validation.Valid;
@@ -32,17 +33,20 @@ public class AuthProfileController {
     private final AuthProfileRepository authProfileRepository;
     private final ObjectStorageService objectStorageService;
     private final StorageStateCaptureService storageStateCaptureService;
+    private final CrawlRunRepository crawlRunRepository;
 
     public AuthProfileController(
             ProjectRepository projectRepository, 
             AuthProfileRepository authProfileRepository,
             ObjectStorageService objectStorageService,
-            StorageStateCaptureService storageStateCaptureService
+            StorageStateCaptureService storageStateCaptureService,
+            CrawlRunRepository crawlRunRepository
     ) {
         this.projectRepository = projectRepository;
         this.authProfileRepository = authProfileRepository;
         this.objectStorageService = objectStorageService;
         this.storageStateCaptureService = storageStateCaptureService;
+        this.crawlRunRepository = crawlRunRepository;
     }
 
     @GetMapping
@@ -186,7 +190,7 @@ public class AuthProfileController {
     public record CaptureStorageStateRequest(String loginUrl) {}
     
     @DeleteMapping("/{authProfileId}")
-    public ResponseEntity<Void> delete(
+    public ResponseEntity<Map<String, Object>> delete(
             @PathVariable UUID projectId,
             @PathVariable UUID authProfileId
     ) {
@@ -198,8 +202,26 @@ public class AuthProfileController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
         
+        // 관련된 CrawlRun들 먼저 삭제
+        var relatedRuns = crawlRunRepository.findByAuthProfileId(authProfileId);
+        if (!relatedRuns.isEmpty()) {
+            crawlRunRepository.deleteAll(relatedRuns);
+        }
+        
+        // 진행 중인 캡처 세션이 있으면 취소
+        try {
+            storageStateCaptureService.cancelCaptureSession(authProfileId);
+        } catch (Exception e) {
+            // ignore
+        }
+        
+        // AuthProfile 삭제
         authProfileRepository.delete(profile);
-        return ResponseEntity.noContent().build();
+        
+        return ResponseEntity.ok(Map.of(
+                "ok", true,
+                "message", String.format("Auth Profile과 관련된 %d개의 Crawl Run이 함께 삭제되었습니다.", relatedRuns.size())
+        ));
     }
 }
 

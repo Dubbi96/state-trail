@@ -164,9 +164,10 @@ export default function ProjectsPage() {
                   <button
                     className="rounded-md border border-red-200 px-3 py-2 text-sm text-red-700 hover:bg-red-50"
                     onClick={async () => {
-                      if (confirm(`정말 ${p.name} 프로젝트를 삭제하시겠습니까?`)) {
+                      if (confirm(`정말 ${p.name} 프로젝트를 삭제하시겠습니까?\n관련된 모든 Auth Profile, Crawl Run, Flow도 함께 삭제됩니다.`)) {
                         try {
-                          await api.projects.delete(p.id);
+                          const result = await api.projects.delete(p.id);
+                          alert(result.message || "프로젝트가 삭제되었습니다.");
                           projectsQuery.refetch();
                         } catch (err: any) {
                           alert(`삭제 실패: ${err.message || err}`);
