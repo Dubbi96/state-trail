@@ -197,7 +197,17 @@ export default function ProjectDashboardPage() {
               className="rounded-md border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50"
               onClick={async () => {
                 const firstAuth = authProfilesQuery.data?.items[0];
-                if (!firstAuth) return;
+                if (!firstAuth) {
+                  alert("Auth Profile을 먼저 생성해주세요.");
+                  return;
+                }
+                if (firstAuth.type === "STORAGE_STATE" && !firstAuth.storageStateObjectKey) {
+                  const proceed = confirm(
+                    `Warning: Auth Profile "${firstAuth.name}"에 Storage State가 설정되지 않았습니다.\n` +
+                    `로그인이 필요한 페이지는 크롤링할 수 없습니다.\n\n계속하시겠습니까?`
+                  );
+                  if (!proceed) return;
+                }
                 await api.crawlRuns.create(projectId, {
                   authProfileId: firstAuth.id,
                   startUrl: projectQuery.data?.baseUrl ?? "https://example.com",
