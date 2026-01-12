@@ -1,10 +1,11 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "@/lib/api";
+import type { GraphDTO } from "@/lib/contracts";
 import { GraphCanvas } from "@/components/graph/GraphCanvas";
 import { InspectorPanel } from "@/components/graph/InspectorPanel";
 
@@ -13,11 +14,36 @@ export default function RunGraphPage() {
   const runId = params.runId;
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const eventSourceCleanupRef = useRef<(() => void) | null>(null);
 
   const graphQuery = useQuery({
     queryKey: ["graph", runId],
-    queryFn: () => api.graph.get(runId)
+    queryFn: () => api.graph.get(runId),
+    refetchInterval: false
   });
+
+  // SSE 이벤트 구독
+  useEffect(() => {
+    const cleanup = api.graph.subscribeEvents(runId, (event) => {
+      if (event.type === "NODE_CREATED" || event.type === "EDGE_CREATED") {
+        // 그래프 데이터 무효화하여 재조회
+        queryClient.invalidateQueries({ queryKey: ["graph", runId] });
+      } else if (event.type === "STATUS") {
+        const status = (event.data as { status?: string })?.status;
+        if (status === "SUCCEEDED" || status === "FAILED") {
+          // 크롤 완료 시 최종 그래프 데이터 재조회
+          queryClient.invalidateQueries({ queryKey: ["graph", runId] });
+        }
+      }
+    });
+    eventSourceCleanupRef.current = cleanup;
+    return () => {
+      if (eventSourceCleanupRef.current) {
+        eventSourceCleanupRef.current();
+      }
+    };
+  }, [runId, queryClient]);
 
   return (
     <main className="space-y-4">

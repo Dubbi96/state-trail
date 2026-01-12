@@ -49,7 +49,52 @@ export const api = {
   graph: {
     get: (runId: string) => http<GraphDTO>(`/api/crawl-runs/${runId}/graph`),
     getNode: (runId: string, nodeId: string) => http<GraphNodeDetailDTO>(`/api/crawl-runs/${runId}/nodes/${nodeId}`),
-    getEdge: (runId: string, edgeId: string) => http<GraphEdgeDetailDTO>(`/api/crawl-runs/${runId}/edges/${edgeId}`)
+    getEdge: (runId: string, edgeId: string) => http<GraphEdgeDetailDTO>(`/api/crawl-runs/${runId}/edges/${edgeId}`),
+    subscribeEvents: (runId: string, onEvent: (event: { type: string; data: unknown }) => void) => {
+      const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8080";
+      const eventSource = new EventSource(`${API_BASE}/api/crawl-runs/${runId}/events`);
+      eventSource.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          onEvent({ type: e.type, data });
+        } catch (err) {
+          console.error("Failed to parse SSE event:", err);
+        }
+      };
+      eventSource.addEventListener("NODE_CREATED", (e) => {
+        try {
+          const data = JSON.parse((e as MessageEvent).data);
+          onEvent({ type: "NODE_CREATED", data });
+        } catch (err) {
+          console.error("Failed to parse NODE_CREATED event:", err);
+        }
+      });
+      eventSource.addEventListener("EDGE_CREATED", (e) => {
+        try {
+          const data = JSON.parse((e as MessageEvent).data);
+          onEvent({ type: "EDGE_CREATED", data });
+        } catch (err) {
+          console.error("Failed to parse EDGE_CREATED event:", err);
+        }
+      });
+      eventSource.addEventListener("STATUS", (e) => {
+        try {
+          const data = JSON.parse((e as MessageEvent).data);
+          onEvent({ type: "STATUS", data });
+        } catch (err) {
+          console.error("Failed to parse STATUS event:", err);
+        }
+      });
+      eventSource.addEventListener("STATS", (e) => {
+        try {
+          const data = JSON.parse((e as MessageEvent).data);
+          onEvent({ type: "STATS", data });
+        } catch (err) {
+          console.error("Failed to parse STATS event:", err);
+        }
+      });
+      return () => eventSource.close();
+    }
   },
   flows: {
     listByRun: (runId: string) => http<ListResponse<FlowDTO>>(`/api/crawl-runs/${runId}/flows`),

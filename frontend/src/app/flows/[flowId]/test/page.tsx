@@ -31,7 +31,7 @@ export default function FlowTestPage() {
           <div className="text-sm text-red-700">코드 생성 실패</div>
         ) : (
           <pre className="overflow-auto rounded-lg bg-slate-950 p-4 text-xs text-slate-100">
-            {codeQuery.data.code}
+            {codeQuery.data?.code ?? ""}
           </pre>
         )}
       </section>

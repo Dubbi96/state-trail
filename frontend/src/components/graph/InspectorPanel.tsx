@@ -49,7 +49,7 @@ export function InspectorPanel({
             <div className="text-sm text-slate-600">로딩 중…</div>
           ) : nodeQuery.isError ? (
             <div className="text-sm text-red-700">노드 상세 조회 실패</div>
-          ) : (
+          ) : nodeQuery.data ? (
             <>
               <div className="rounded-lg border border-slate-200 p-3">
                 <div className="text-sm font-medium">{nodeQuery.data.title ?? "(no title)"}</div>
@@ -68,6 +68,54 @@ export function InspectorPanel({
                     <div className="break-all font-medium">{nodeQuery.data.contentType ?? "-"}</div>
                   </div>
                 </div>
+                
+                {/* 스크린샷 */}
+                {nodeQuery.data.screenshotUrl && (
+                  <div className="mt-3">
+                    <div className="mb-1 text-xs text-slate-500">Screenshot</div>
+                    <a
+                      href={nodeQuery.data.screenshotUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block overflow-hidden rounded border border-slate-200 hover:border-slate-300"
+                    >
+                      <img
+                        src={nodeQuery.data.screenshotUrl}
+                        alt="Screenshot"
+                        className="h-auto w-full object-contain"
+                      />
+                    </a>
+                  </div>
+                )}
+                
+                {/* 네트워크 로그 */}
+                {nodeQuery.data.networkLogUrl && (
+                  <div className="mt-3">
+                    <div className="mb-1 text-xs text-slate-500">Network Log (HAR)</div>
+                    <a
+                      href={nodeQuery.data.networkLogUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      download="network-log.har"
+                      className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-1 text-xs hover:bg-slate-50"
+                    >
+                      <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Download HAR
+                    </a>
+                  </div>
+                )}
+                
+                {/* UI 시그니처 요약 */}
+                {nodeQuery.data.uiSignature && Object.keys(nodeQuery.data.uiSignature).length > 0 && (
+                  <div className="mt-3">
+                    <div className="mb-1 text-xs text-slate-500">UI Signature</div>
+                    <pre className="max-h-[20vh] overflow-auto rounded bg-slate-50 p-2 text-[10px] text-slate-700">
+                      {JSON.stringify(nodeQuery.data.uiSignature, null, 2)}
+                    </pre>
+                  </div>
+                )}
               </div>
 
               <div className="rounded-lg border border-slate-200 p-3">
@@ -84,7 +132,7 @@ export function InspectorPanel({
                 )}
               </div>
             </>
-          )}
+          ) : null}
         </div>
       )}
 
@@ -95,12 +143,18 @@ export function InspectorPanel({
             <div className="text-sm text-slate-600">로딩 중…</div>
           ) : edgeQuery.isError ? (
             <div className="text-sm text-red-700">엣지 상세 조회 실패</div>
-          ) : (
+          ) : edgeQuery.data ? (
             <div className="rounded-lg border border-slate-200 p-3 text-xs">
               <div>
                 <span className="text-slate-500">Type</span>{" "}
                 <span className="font-medium">{edgeQuery.data.actionType}</span>
               </div>
+              {edgeQuery.data.locator && (
+                <div className="mt-2">
+                  <div className="text-slate-500">Locator</div>
+                  <div className="mt-1 break-all font-medium">{edgeQuery.data.locator}</div>
+                </div>
+              )}
               <div className="mt-2">
                 <div className="text-slate-500">Anchor Text</div>
                 <div className="mt-1 whitespace-pre-wrap font-medium">{edgeQuery.data.anchorText ?? "-"}</div>
@@ -108,8 +162,45 @@ export function InspectorPanel({
               <div className="mt-2 break-all text-slate-500">
                 {edgeQuery.data.from} → {edgeQuery.data.to}
               </div>
+              
+              {/* Payload */}
+              {edgeQuery.data.payload && Object.keys(edgeQuery.data.payload).length > 0 && (
+                <div className="mt-3">
+                  <div className="mb-1 text-slate-500">Payload</div>
+                  <pre className="max-h-[15vh] overflow-auto rounded bg-slate-50 p-2 text-[10px] text-slate-700">
+                    {JSON.stringify(edgeQuery.data.payload, null, 2)}
+                  </pre>
+                </div>
+              )}
+              
+              {/* Risk Tags */}
+              {edgeQuery.data.riskTags && Object.keys(edgeQuery.data.riskTags).length > 0 && (
+                <div className="mt-3">
+                  <div className="mb-1 text-slate-500">Risk Tags</div>
+                  <div className="flex flex-wrap gap-1">
+                    {Object.entries(edgeQuery.data.riskTags).map(([key, value]) => (
+                      <span
+                        key={key}
+                        className="rounded bg-yellow-100 px-2 py-0.5 text-[10px] text-yellow-800"
+                      >
+                        {key}: {String(value)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              {/* HTTP Evidence */}
+              {edgeQuery.data.httpEvidence && Object.keys(edgeQuery.data.httpEvidence).length > 0 && (
+                <div className="mt-3">
+                  <div className="mb-1 text-slate-500">HTTP Evidence</div>
+                  <pre className="max-h-[15vh] overflow-auto rounded bg-slate-50 p-2 text-[10px] text-slate-700">
+                    {JSON.stringify(edgeQuery.data.httpEvidence, null, 2)}
+                  </pre>
+                </div>
+              )}
             </div>
-          )}
+          ) : null}
         </div>
       )}
     </div>

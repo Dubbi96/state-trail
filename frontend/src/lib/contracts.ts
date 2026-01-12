@@ -36,6 +36,9 @@ export type GraphNodeDTO = {
   title?: string;
   screenshotThumbUrl?: string;
   depth: number;
+  uiSignatureSummary?: Record<string, unknown>;
+  riskTags?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
 };
 
 export type GraphEdgeDTO = {
@@ -43,6 +46,8 @@ export type GraphEdgeDTO = {
   from: Id;
   to: Id;
   actionType: string;
+  locator?: string;
+  riskTags?: Record<string, unknown>;
   tags?: Record<string, unknown>;
 };
 
@@ -63,6 +68,9 @@ export type GraphNodeDetailDTO = {
   fetchedAt: string | null;
   htmlSize: number | null;
   htmlSnippet: string | null;
+  screenshotUrl?: string | null;
+  networkLogUrl?: string | null;
+  uiSignature?: Record<string, unknown>;
 };
 
 export type GraphEdgeDetailDTO = {
@@ -70,7 +78,11 @@ export type GraphEdgeDetailDTO = {
   from: Id;
   to: Id;
   actionType: string;
+  locator?: string | null;
   anchorText: string | null;
+  payload?: Record<string, unknown>;
+  riskTags?: Record<string, unknown>;
+  httpEvidence?: Record<string, unknown>;
 };
 
 export type FlowStepDTO = {

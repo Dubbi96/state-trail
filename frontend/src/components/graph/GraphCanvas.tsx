@@ -66,10 +66,10 @@ export function GraphCanvas({
             color: "#0f172a",
             "text-background-color": "#ffffff",
             "text-background-opacity": 1,
-            "text-background-padding": 2,
-            "font-size": 10,
+            "text-background-padding": "2px",
+            "font-size": "10px",
             "text-wrap": "ellipsis",
-            "text-max-width": 120
+            "text-max-width": "120px"
           }
         },
         {
@@ -87,11 +87,11 @@ export function GraphCanvas({
             "target-arrow-color": "#94a3b8",
             "target-arrow-shape": "triangle",
             label: "data(label)",
-            "font-size": 9,
+            "font-size": "9px",
             color: "#475569",
             "text-background-color": "#ffffff",
             "text-background-opacity": 1,
-            "text-background-padding": 1
+            "text-background-padding": "1px"
           }
         },
         {
@@ -103,7 +103,7 @@ export function GraphCanvas({
           }
         }
       ],
-      layout: { name: "dagre", animate: false, nodeSep: 50, rankSep: 100, rankDir: "TB" }
+      layout: { name: "dagre", nodeSep: 50, rankSep: 100, rankDir: "TB" } as any
     });
 
     const cy = cyRef.current;
@@ -196,12 +196,11 @@ export function GraphCanvas({
 
     cy.layout({ 
       name: "dagre", 
-      animate: false,
       nodeSep: 50,
       rankSep: 100,
       rankDir: "TB",
       ranker: "tight-tree"
-    }).run();
+    } as any).run();
   }, [graph]);
 
   useEffect(() => {
