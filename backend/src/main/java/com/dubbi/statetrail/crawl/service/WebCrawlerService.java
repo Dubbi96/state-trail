@@ -847,144 +847,127 @@ public class WebCrawlerService {
                 return new StateChangeResult(false, beforeUrl, beforeDomHash, null, List.of());
             }
             
-            // 아코디언이 실제로 펼쳐질 때까지 대기 (더 정교한 감지)
-            System.out.printf("[Crawl] Browser: Waiting for accordion '%s' to expand...%n", action.text());
+            // 아코디언이 실제로 펼쳐져 있는지 확인하고 링크 개수 확인
+            System.out.printf("[Crawl] Browser: Checking accordion '%s' state and links...%n", action.text());
             boolean accordionIsExpanded = false;
             int newLinksCount = 0;
-            try {
-                // 아코디언이 펼쳐지고 실제로 내용이 나타날 때까지 최대 5초 대기
-                String textEscaped = action.text().replace("\\", "\\\\").replace("\"", "\\\"");
-                Object expandedResult = page.waitForFunction(String.format("""
-                    () => {
-                        const text = "%s";
-                        const buttons = document.querySelectorAll('button, [role="button"]');
-                        for (const btn of buttons) {
-                            const btnText = (btn.innerText || btn.textContent || '').trim();
-                            if (btnText === text) {
-                                // 1. aria-expanded 확인
-                                const ariaExpanded = btn.getAttribute('aria-expanded') === 'true' ||
-                                                    btn.closest('[aria-expanded="true"]') !== null;
-                                
-                                // 2. MUI 클래스 확인
-                                const muiExpanded = btn.closest('.Mui-expanded') !== null ||
-                                                   btn.closest('.MuiAccordion-expanded') !== null;
-                                
-                                // 3. 아코디언 패널 찾기
-                                let accordionPanel = btn.closest('.MuiAccordion-root');
-                                if (!accordionPanel) {
-                                    accordionPanel = btn.parentElement;
-                                    while (accordionPanel && !accordionPanel.classList.contains('MuiAccordion-root')) {
-                                        accordionPanel = accordionPanel.parentElement;
-                                    }
-                                }
-                                
-                                // 4. 패널이 실제로 보이는지 확인 (display, height, visibility)
-                                let panelVisible = false;
-                                if (accordionPanel) {
-                                    const panelDetails = accordionPanel.querySelector('.MuiAccordionDetails-root, .MuiCollapse-root, [class*="AccordionDetails"], [class*="Collapse"]');
-                                    if (panelDetails) {
-                                        const style = window.getComputedStyle(panelDetails);
-                                        const height = panelDetails.offsetHeight || panelDetails.clientHeight;
-                                        panelVisible = style.display !== 'none' && 
-                                                     style.visibility !== 'hidden' && 
-                                                     height > 0;
-                                    }
-                                }
-                                
-                                // 5. 펼쳐진 패널 내부에 링크가 있는지 확인
-                                let hasLinks = false;
-                                if (accordionPanel) {
-                                    const links = accordionPanel.querySelectorAll('a[href], [class*="ListItemButton"] a, [class*="ListItem-root"] a, [role="link"]');
-                                    hasLinks = links.length > 0;
-                                }
-                                
-                                // 6. 펼쳐진 패널 내부에 새로운 버튼/메뉴 항목이 있는지 확인
-                                let hasNewItems = false;
-                                if (accordionPanel) {
-                                    const items = accordionPanel.querySelectorAll('[class*="ListItem"], [class*="MenuItem"], [role="menuitem"]');
-                                    hasNewItems = items.length > 0;
-                                }
-                                
-                                // 아코디언이 펼쳐졌고 실제로 내용이 보이는 경우
-                                const expanded = ariaExpanded || muiExpanded;
-                                const hasContent = panelVisible || hasLinks || hasNewItems;
-                                
-                                return expanded && hasContent;
-                            }
-                        }
-                        return false;
-                    }
-                """, textEscaped), new Page.WaitForFunctionOptions().setTimeout(5000));
-                accordionIsExpanded = expandedResult instanceof Boolean && (Boolean) expandedResult;
-                
-                // 펼쳐진 패널 내부의 링크 개수 확인
-                if (accordionIsExpanded) {
-                    String textEscaped2 = action.text().replace("\\", "\\\\").replace("\"", "\\\"");
-                    Object linksCount = page.evaluate(String.format("""
-                        () => {
-                            const text = "%s";
-                            const buttons = document.querySelectorAll('button, [role="button"]');
-                            for (const btn of buttons) {
-                                const btnText = (btn.innerText || btn.textContent || '').trim();
-                                if (btnText === text) {
-                                    let accordionPanel = btn.closest('.MuiAccordion-root');
-                                    if (!accordionPanel) {
-                                        accordionPanel = btn.parentElement;
-                                        while (accordionPanel && !accordionPanel.classList.contains('MuiAccordion-root')) {
-                                            accordionPanel = accordionPanel.parentElement;
-                                        }
-                                    }
-                                    if (accordionPanel) {
-                                        const links = accordionPanel.querySelectorAll('a[href], [class*="ListItemButton"], [class*="ListItem-root"], [role="link"], [role="menuitem"]');
-                                        return links.length;
-                                    }
-                                }
-                            }
-                            return 0;
-                        }
-                    """, textEscaped2));
-                    if (linksCount instanceof Number) {
-                        newLinksCount = ((Number) linksCount).intValue();
-                    }
-                }
-                
-                System.out.printf("[Crawl] Browser: Accordion expanded after click: %s (waited for expansion, found %d new items)%n", 
-                        accordionIsExpanded, newLinksCount);
-            } catch (Exception e) {
-                // 타임아웃되었거나 아코디언이 아닐 수 있음
-                System.out.printf("[Crawl] Browser: Timeout waiting for accordion expansion or not an accordion: %s%n", e.getMessage());
-                // 다시 한 번 확인 (간단한 버전)
-                String textEscaped = action.text().replace("\\", "\\\\").replace("\"", "\\\"");
-                Object accordionExpanded = page.evaluate(String.format("""
-                    () => {
-                        const text = "%s";
-                        const buttons = document.querySelectorAll('button, [role="button"]');
-                        for (const btn of buttons) {
-                            const btnText = (btn.innerText || btn.textContent || '').trim();
-                            if (btnText === text) {
-                                const expanded = btn.getAttribute('aria-expanded') === 'true' ||
-                                               btn.closest('[aria-expanded="true"]') !== null ||
-                                               btn.closest('.Mui-expanded') !== null ||
+            
+            // 아코디언 상태와 링크 개수를 한 번에 확인 (waitForFunction 대신 직접 확인)
+            String textEscaped = action.text().replace("\\", "\\\\").replace("\"", "\\\"");
+            Object accordionState = page.evaluate(String.format("""
+                () => {
+                    const text = "%s";
+                    const buttons = document.querySelectorAll('button, [role="button"]');
+                    for (const btn of buttons) {
+                        const btnText = (btn.innerText || btn.textContent || '').trim();
+                        if (btnText === text) {
+                            // 1. aria-expanded 확인
+                            const ariaExpanded = btn.getAttribute('aria-expanded') === 'true' ||
+                                                btn.closest('[aria-expanded="true"]') !== null;
+                            
+                            // 2. MUI 클래스 확인
+                            const muiExpanded = btn.closest('.Mui-expanded') !== null ||
                                                btn.closest('.MuiAccordion-expanded') !== null;
-                                
-                                // 패널 내부 링크 확인
-                                let accordionPanel = btn.closest('.MuiAccordion-root');
-                                if (!accordionPanel) {
-                                    accordionPanel = btn.parentElement;
-                                    while (accordionPanel && !accordionPanel.classList.contains('MuiAccordion-root')) {
-                                        accordionPanel = accordionPanel.parentElement;
-                                    }
+                            
+                            // 3. 아코디언 패널 찾기
+                            let accordionPanel = btn.closest('.MuiAccordion-root');
+                            if (!accordionPanel) {
+                                accordionPanel = btn.parentElement;
+                                while (accordionPanel && !accordionPanel.classList.contains('MuiAccordion-root')) {
+                                    accordionPanel = accordionPanel.parentElement;
                                 }
-                                const hasLinks = accordionPanel && accordionPanel.querySelectorAll('a[href], [class*="ListItem"]').length > 0;
-                                
-                                return expanded || hasLinks;
                             }
+                            
+                            // 4. 패널이 실제로 보이는지 확인
+                            let panelVisible = false;
+                            if (accordionPanel) {
+                                const panelDetails = accordionPanel.querySelector('.MuiAccordionDetails-root, .MuiCollapse-root, [class*="AccordionDetails"], [class*="Collapse"]');
+                                if (panelDetails) {
+                                    const style = window.getComputedStyle(panelDetails);
+                                    const height = panelDetails.offsetHeight || panelDetails.clientHeight;
+                                    panelVisible = style.display !== 'none' && 
+                                                 style.visibility !== 'hidden' && 
+                                                 height > 0;
+                                }
+                            }
+                            
+                            // 5. 펼쳐진 패널 내부의 모든 링크 찾기 (더 포괄적으로)
+                            let links = [];
+                            if (accordionPanel) {
+                                // 모든 가능한 링크 요소 찾기
+                                const linkSelectors = [
+                                    'a[href]',
+                                    '[class*="ListItemButton"]',
+                                    '[class*="ListItem-root"]',
+                                    '[class*="MenuItem"]',
+                                    '[role="link"]',
+                                    '[role="menuitem"]',
+                                    '[onclick]',
+                                    '[data-href]',
+                                    '[data-to]',
+                                    '[data-path]'
+                                ];
+                                
+                                linkSelectors.forEach(selector => {
+                                    accordionPanel.querySelectorAll(selector).forEach(el => {
+                                        // 실제 클릭 가능한 요소인지 확인
+                                        if (el.offsetParent !== null || el.style.display !== 'none') {
+                                            links.push(el);
+                                        }
+                                    });
+                                });
+                            }
+                            
+                            // 6. 펼쳐진 패널 내부에 새로운 버튼/메뉴 항목이 있는지 확인
+                            let items = [];
+                            if (accordionPanel) {
+                                accordionPanel.querySelectorAll('[class*="ListItem"], [class*="MenuItem"], [role="menuitem"]').forEach(item => {
+                                    if (item.offsetParent !== null || item.style.display !== 'none') {
+                                        items.push(item);
+                                    }
+                                });
+                            }
+                            
+                            // 아코디언이 펼쳐졌고 실제로 내용이 보이는 경우
+                            const expanded = ariaExpanded || muiExpanded;
+                            const hasContent = panelVisible || links.length > 0 || items.length > 0;
+                            
+                            return {
+                                isExpanded: expanded,
+                                hasContent: hasContent,
+                                linksCount: links.length,
+                                itemsCount: items.length,
+                                panelVisible: panelVisible
+                            };
                         }
-                        return false;
                     }
-                """, textEscaped));
-                accordionIsExpanded = accordionExpanded instanceof Boolean && (Boolean) accordionExpanded;
-                System.out.printf("[Crawl] Browser: Accordion expanded check (final): %s%n", accordionIsExpanded);
+                    return { isExpanded: false, hasContent: false, linksCount: 0, itemsCount: 0, panelVisible: false };
+                }
+            """, textEscaped));
+            
+            if (accordionState instanceof Map<?, ?>) {
+                Map<?, ?> state = (Map<?, ?>) accordionState;
+                Object isExpandedObj = state.get("isExpanded");
+                Object hasContentObj = state.get("hasContent");
+                Object linksCountObj = state.get("linksCount");
+                Object itemsCountObj = state.get("itemsCount");
+                
+                accordionIsExpanded = (isExpandedObj instanceof Boolean && (Boolean) isExpandedObj) ||
+                                     (hasContentObj instanceof Boolean && (Boolean) hasContentObj);
+                if (linksCountObj instanceof Number) {
+                    newLinksCount = ((Number) linksCountObj).intValue();
+                }
+                if (itemsCountObj instanceof Number) {
+                    newLinksCount += ((Number) itemsCountObj).intValue();
+                }
+            }
+            
+            System.out.printf("[Crawl] Browser: Accordion state - expanded: %s, links found: %d%n", 
+                    accordionIsExpanded, newLinksCount);
+            
+            // 아코디언이 펼쳐져 있으면 잠시 대기 (애니메이션 완료)
+            if (accordionIsExpanded) {
+                page.waitForTimeout(500);
             }
             
             // DOM 안정화 대기
