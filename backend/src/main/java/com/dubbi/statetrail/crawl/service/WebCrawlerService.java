@@ -18,6 +18,7 @@ import com.dubbi.statetrail.crawl.domain.CrawlLinkRepository;
 import com.dubbi.statetrail.crawl.domain.CrawlPageEntity;
 import com.dubbi.statetrail.crawl.domain.CrawlPageRepository;
 import com.dubbi.statetrail.crawl.domain.CrawlRunRepository;
+import com.dubbi.statetrail.crawl.web.ActionType;
 import com.dubbi.statetrail.crawl.web.AllowlistRules;
 import com.dubbi.statetrail.crawl.web.CrawlBudget;
 import com.dubbi.statetrail.crawl.web.CrawlStrategy;
@@ -139,7 +140,12 @@ public class WebCrawlerService {
             var startPage = getOrCreatePage(runId, run.getStartUrl(), 0);
             pageByUrl.put(run.getStartUrl(), startPage);
             depthByUrl.put(run.getStartUrl(), 0);
-            eventHub.publish(runId, "NODE", Map.of("id", startPage.getId(), "url", run.getStartUrl(), "depth", 0));
+            eventHub.publish(runId, "NODE_CREATED", Map.of(
+                    "id", startPage.getId(),
+                    "url", run.getStartUrl(),
+                    "depth", 0,
+                    "nodeKey", startPage.getNodeKey()
+            ));
             offer(ordering, run.getStartUrl(), bfs, enqueued, mcsScore, mcs, seq);
 
             Playwright playwright = null;
@@ -311,15 +317,34 @@ public class WebCrawlerService {
                             toPage = getOrCreatePage(runId, toUrl, toDepth);
                             pageByUrl.put(toUrl, toPage);
                             depthByUrl.put(toUrl, toDepth);
-                            eventHub.publish(runId, "NODE", Map.of("id", toPage.getId(), "url", toUrl, "depth", toDepth));
+                            Map<String, Object> nodeEvent = new HashMap<>();
+                            nodeEvent.put("id", toPage.getId());
+                            nodeEvent.put("url", toUrl);
+                            nodeEvent.put("depth", toDepth);
+                            nodeEvent.put("nodeKey", toPage.getNodeKey());
+                            if (toPage.getTitle() != null) {
+                                nodeEvent.put("title", toPage.getTitle());
+                            }
+                            eventHub.publish(runId, "NODE_CREATED", nodeEvent);
                         }
 
                         String edgeKey = current.getId() + "->" + toPage.getId();
                         if (edgeSeen.add(edgeKey)) {
                             try {
-                                crawlLinkRepository.save(new CrawlLinkEntity(UUID.randomUUID(), run, current, toPage, link.anchorText()));
+                                var linkEntity = new CrawlLinkEntity(UUID.randomUUID(), run, current, toPage, link.anchorText());
+                                linkEntity.setActionType(ActionType.NAVIGATE);
+                                crawlLinkRepository.save(linkEntity);
                                 edges++;
-                                eventHub.publish(runId, "EDGE", Map.of("from", current.getId(), "to", toPage.getId()));
+                                
+                                Map<String, Object> edgeEvent = new HashMap<>();
+                                edgeEvent.put("id", linkEntity.getId());
+                                edgeEvent.put("from", current.getId());
+                                edgeEvent.put("to", toPage.getId());
+                                edgeEvent.put("actionType", ActionType.NAVIGATE.name());
+                                if (link.anchorText() != null) {
+                                    edgeEvent.put("anchorText", link.anchorText());
+                                }
+                                eventHub.publish(runId, "EDGE_CREATED", edgeEvent);
                             } catch (Exception ignored) {
                                 // ignore duplicates due to race/constraints
                             }

@@ -1,6 +1,7 @@
 package com.dubbi.statetrail.graph.api.dto;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
 
 public final class GraphInspectorDtos {
@@ -17,7 +18,10 @@ public final class GraphInspectorDtos {
             Instant discoveredAt,
             Instant fetchedAt,
             Integer htmlSize,
-            String htmlSnippet
+            String htmlSnippet,
+            String screenshotUrl,
+            String networkLogUrl,
+            Map<String, Object> uiSignature
     ) {}
 
     public record EdgeDetailDTO(
@@ -25,7 +29,11 @@ public final class GraphInspectorDtos {
             UUID from,
             UUID to,
             String actionType,
-            String anchorText
+            String locator,
+            String anchorText,
+            Map<String, Object> payload,
+            Map<String, Object> riskTags,
+            Map<String, Object> httpEvidence
     ) {}
 }
 

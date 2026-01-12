@@ -16,7 +16,10 @@ public final class GraphDtos {
             String urlPattern,
             String title,
             String screenshotThumbUrl,
-            int depth
+            int depth,
+            Map<String, Object> uiSignatureSummary,
+            Map<String, Object> riskTags,
+            Map<String, Object> metadata
     ) {}
 
     public record EdgeDTO(
@@ -24,6 +27,8 @@ public final class GraphDtos {
             UUID from,
             UUID to,
             String actionType,
+            String locator,
+            Map<String, Object> riskTags,
             Map<String, Object> tags
     ) {}
 }
