@@ -37,7 +37,19 @@ export const api = {
   authProfiles: {
     list: (projectId: string) => http<ListResponse<AuthProfileDTO>>(`/api/projects/${projectId}/auth-profiles`),
     create: (projectId: string, body: { name: string; type: "STORAGE_STATE" | "SCRIPT_LOGIN"; tags: Record<string, unknown> }) =>
-      http<AuthProfileDTO>(`/api/projects/${projectId}/auth-profiles`, { method: "POST", body: JSON.stringify(body) })
+      http<AuthProfileDTO>(`/api/projects/${projectId}/auth-profiles`, { method: "POST", body: JSON.stringify(body) }),
+    uploadStorageState: (projectId: string, authProfileId: string, file: File) => {
+      const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8080";
+      const formData = new FormData();
+      formData.append("file", file);
+      return fetch(`${API_BASE}/api/projects/${projectId}/auth-profiles/${authProfileId}/storage-state`, {
+        method: "PUT",
+        body: formData
+      }).then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+        return res.json() as Promise<AuthProfileDTO>;
+      });
+    }
   },
   crawlRuns: {
     list: (projectId: string) => http<ListResponse<CrawlRunDTO>>(`/api/projects/${projectId}/crawl-runs`),

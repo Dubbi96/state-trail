@@ -63,6 +63,31 @@ export default function ProjectDashboardPage() {
               <div key={a.id} className="rounded-lg border border-slate-200 p-3">
                 <div className="font-medium">{a.name}</div>
                 <div className="text-sm text-slate-600">{a.type}</div>
+                {a.type === "STORAGE_STATE" && (
+                  <div className="mt-2">
+                    <label className="block text-xs text-slate-600 mb-1">
+                      Storage State 파일 업로드 (Playwright에서 추출한 .json 파일)
+                    </label>
+                    <input
+                      type="file"
+                      accept=".json"
+                      className="text-xs"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          try {
+                            await api.authProfiles.uploadStorageState(projectId, a.id, file);
+                            authProfilesQuery.refetch();
+                            alert("Storage state 업로드 완료!");
+                          } catch (err) {
+                            alert(`업로드 실패: ${err}`);
+                          }
+                          e.target.value = ""; // Reset input
+                        }
+                      }}
+                    />
+                  </div>
+                )}
               </div>
             ))}
           </div>

@@ -5,6 +5,7 @@ import com.dubbi.statetrail.auth.api.dto.AuthProfileDtos.CreateAuthProfileReques
 import com.dubbi.statetrail.auth.domain.AuthProfileEntity;
 import com.dubbi.statetrail.auth.domain.AuthProfileRepository;
 import com.dubbi.statetrail.common.dto.ListResponse;
+import com.dubbi.statetrail.common.storage.ObjectStorageService;
 import com.dubbi.statetrail.project.domain.ProjectRepository;
 import jakarta.validation.Valid;
 import java.util.UUID;
@@ -19,16 +20,23 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import java.io.IOException;
 
 @RestController
 @RequestMapping("/api/projects/{projectId}/auth-profiles")
 public class AuthProfileController {
     private final ProjectRepository projectRepository;
     private final AuthProfileRepository authProfileRepository;
+    private final ObjectStorageService objectStorageService;
 
-    public AuthProfileController(ProjectRepository projectRepository, AuthProfileRepository authProfileRepository) {
+    public AuthProfileController(
+            ProjectRepository projectRepository, 
+            AuthProfileRepository authProfileRepository,
+            ObjectStorageService objectStorageService
+    ) {
         this.projectRepository = projectRepository;
         this.authProfileRepository = authProfileRepository;
+        this.objectStorageService = objectStorageService;
     }
 
     @GetMapping
@@ -63,12 +71,22 @@ public class AuthProfileController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
         }
 
-        // TODO: MinIO에 파일 업로드하고 objectKey 저장
-        // 현재는 파일명만 저장 (임시)
-        String objectKey = "storage-states/" + authProfileId + "/" + file.getOriginalFilename();
-        profile.setStorageStateObjectKey(objectKey);
-        
-        return ResponseEntity.ok(toDto(authProfileRepository.save(profile)));
+        try {
+            // 파일 내용 읽기
+            byte[] fileBytes = file.getBytes();
+            String fileContent = new String(fileBytes, java.nio.charset.StandardCharsets.UTF_8);
+            
+            // MinIO에 storage state 저장
+            String objectKey = objectStorageService.saveStorageState(authProfileId, fileContent);
+            
+            // AuthProfile에 objectKey 저장
+            profile.setStorageStateObjectKey(objectKey);
+            authProfileRepository.save(profile);
+            
+            return ResponseEntity.ok(toDto(profile));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
 
     @PutMapping("/{authProfileId}/login-script")
