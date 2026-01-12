@@ -1367,8 +1367,8 @@ public class WebCrawlerService {
                                 
                                 boolean clicked = false;
                                 if (clickResult instanceof Map<?, ?>) {
-                                    Map<?, ?> result = (Map<?, ?>) clickResult;
-                                    Object clickedObj = result.get("clicked");
+                                    Map<?, ?> clickResultMap = (Map<?, ?>) clickResult;
+                                    Object clickedObj = clickResultMap.get("clicked");
                                     clicked = clickedObj instanceof Boolean && (Boolean) clickedObj;
                                 }
                                 
