@@ -563,33 +563,40 @@ public class WebCrawlerService {
                     } catch (e) {}
                 });
                 
-                // 4. React Router의 실제 라우트 정보 추출 (window.__REACT_ROUTER__ 또는 히스토리 기반)
+                // 4. React Router Link 컴포넌트에서 실제 to 속성 추출
+                // React Router v6+는 실제로 <a> 태그를 렌더링하지만, data 속성이나 특별한 클래스를 사용할 수 있음
+                // 또는 실제 React Fiber 트리에서 Link 컴포넌트의 props를 찾기
                 try {
-                    if (window.__REACT_ROUTER_STATE__) {
-                        // React Router 상태가 있는 경우
-                        Object.values(window.__REACT_ROUTER_STATE__.routes || {}).forEach(route => {
-                            if (route.path && route.path.startsWith('/')) {
-                                const url = new URL(route.path, baseUrl).href;
-                                links.add(JSON.stringify({
-                                    href: url,
-                                    text: route.path
-                                }));
-                            }
-                        });
-                    }
+                    // React DevTools가 설치되어 있으면 window.__REACT_DEVTOOLS_GLOBAL_HOOK__를 사용할 수 있지만,
+                    // 일반적으로는 실제 렌더링된 DOM만 확인
+                    
+                    // React Router가 렌더링한 <a> 태그는 보통 href 속성을 가지고 있음
+                    // 하지만 SPA이므로 실제 네비게이션은 클라이언트 사이드에서 처리
+                    // 따라서 실제로 <a href>를 찾는 것이 가장 안전함
                 } catch (e) {}
                 
-                // 5. MUI 및 Material-UI 컴포넌트에서 링크 추출
-                // ListItemButton, ListItem 등에서 href나 data 속성 찾기
+                // 5. MUI 및 Material-UI 컴포넌트에서 실제 href나 data 속성만 추출
+                // 텍스트 기반 추측은 제거 - 실제 DOM 속성만 사용
                 document.querySelectorAll('[class*="MuiListItemButton"], [class*="MuiListItem-root"], [class*="MuiAccordionSummary"]').forEach(el => {
                     try {
                         const text = (el.innerText || el.textContent || '').trim();
-                        // 가장 가까운 부모 또는 자신에서 href 속성 찾기
+                        // 가장 가까운 부모 또는 자신에서 실제 href 속성 찾기
                         let target = el;
-                        for (let i = 0; i < 3 && target; i++) {
-                            const href = target.getAttribute('href') || target.getAttribute('data-href');
-                            if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {
+                        for (let i = 0; i < 5 && target; i++) {
+                            const href = target.getAttribute('href');
+                            if (href && !href.startsWith('javascript:') && !href.startsWith('#') && href !== '') {
+                                // 실제 href가 있는 경우만 추가
                                 const url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
+                                links.add(JSON.stringify({
+                                    href: url,
+                                    text: text.slice(0, 200)
+                                }));
+                                break;
+                            }
+                            // data 속성 확인 (data-href, data-path 등)
+                            const dataHref = target.getAttribute('data-href') || target.getAttribute('data-path');
+                            if (dataHref && !dataHref.startsWith('javascript:') && !dataHref.startsWith('#') && dataHref !== '') {
+                                const url = dataHref.startsWith('http') ? dataHref : new URL(dataHref, baseUrl).href;
                                 links.add(JSON.stringify({
                                     href: url,
                                     text: text.slice(0, 200)
@@ -598,43 +605,16 @@ public class WebCrawlerService {
                             }
                             target = target.parentElement;
                         }
-                        
-                        // 클릭 핸들러가 있고 경로 패턴이 있는 경우 (프로그래밍적 네비게이션)
-                        if (!target || !target.getAttribute('href')) {
-                            // 텍스트에서 일반적인 경로 패턴 추출 (예: "요청 관리" -> /requests)
-                            // 또는 aria-label에서 경로 추출
-                            const ariaLabel = el.getAttribute('aria-label');
-                            const allText = (text + ' ' + (ariaLabel || '')).toLowerCase();
-                            // 일반적인 경로 패턴 매칭
-                            const commonPaths = {
-                                '요청': '/requests',
-                                'request': '/requests',
-                                '관리': '/admin',
-                                'admin': '/admin',
-                                '생성': '/create',
-                                'create': '/create',
-                                '목록': '/list',
-                                'list': '/list'
-                            };
-                            for (const [key, path] of Object.entries(commonPaths)) {
-                                if (allText.includes(key)) {
-                                    const url = new URL(path, baseUrl).href;
-                                    links.add(JSON.stringify({
-                                        href: url,
-                                        text: text.slice(0, 200)
-                                    }));
-                                    break;
-                                }
-                            }
-                        }
                     } catch (e) {}
                 });
                 
-                // 6. 모든 클릭 가능한 요소에서 data-* 속성으로 URL 추출
-                document.querySelectorAll('[data-path], [data-route], [data-page]').forEach(el => {
+                // 8. 모든 클릭 가능한 요소에서 data-* 속성으로 URL 추출 (실제 속성만)
+                document.querySelectorAll('[data-path], [data-route], [data-page], [data-href], [data-url]').forEach(el => {
                     try {
-                        const path = el.getAttribute('data-path') || el.getAttribute('data-route') || el.getAttribute('data-page');
-                        if (path && path.startsWith('/')) {
+                        const path = el.getAttribute('data-path') || el.getAttribute('data-route') || 
+                                    el.getAttribute('data-page') || el.getAttribute('data-href') || 
+                                    el.getAttribute('data-url');
+                        if (path && path.startsWith('/') && path !== '/') {
                             const url = new URL(path, baseUrl).href;
                             links.add(JSON.stringify({
                                 href: url,
@@ -644,51 +624,47 @@ public class WebCrawlerService {
                     } catch (e) {}
                 });
                 
-                // 7. 실제 클릭 가능한 모든 요소에서 href나 router 패턴 찾기 (최후 수단)
-                // 네비게이션 메뉴 내의 모든 클릭 가능한 요소
-                document.querySelectorAll('nav a, nav button, [role="navigation"] a, [role="navigation"] button, [class*="menu"] a, [class*="menu"] button, [class*="sidebar"] a, [class*="sidebar"] button').forEach(el => {
+                // 9. React Router가 실제로 렌더링한 Link 컴포넌트 찾기
+                // React Router Link는 보통 <a> 태그로 렌더링되므로 이미 1번에서 처리됨
+                // 하지만 추가로 확인할 수 있는 방법: 실제 클릭 이벤트 리스너를 가진 요소들
+                // (이건 시간이 오래 걸리므로 실제 DOM 속성만 사용하는 것이 좋음)
+                
+                // 6. 네비게이션 메뉴에서 실제 href 속성만 추출 (추측 없음)
+                document.querySelectorAll('nav a[href], [role="navigation"] a[href], [class*="menu"] a[href], [class*="sidebar"] a[href]').forEach(el => {
                     try {
-                        const text = (el.innerText || el.textContent || '').trim();
-                        if (text.length === 0) return;
-                        
-                        // href 속성이 있는 경우
                         const href = el.getAttribute('href');
                         if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {
                             const url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
                             links.add(JSON.stringify({
                                 href: url,
-                                text: text.slice(0, 200)
+                                text: (el.innerText || el.textContent || '').trim().slice(0, 200)
                             }));
-                            return;
-                        }
-                        
-                        // button이고 텍스트가 있는 경우, 텍스트 기반으로 경로 추측
-                        if (el.tagName === 'BUTTON' || el.getAttribute('role') === 'button') {
-                            // 텍스트를 기반으로 일반적인 경로 패턴 생성
-                            const textLower = text.toLowerCase().replace(/[^a-z0-9가-힣]/g, '');
-                            // 공통 패턴: 텍스트 -> 경로
-                            const textToPathMap = {
-                                '요청관리': '/requests',
-                                '요청목록': '/requests',
-                                '수매관리': '/purchase',
-                                '부관리자관리': '/admin/sub',
-                                '지역관리': '/region',
-                                '지역생성': '/region/create'
-                            };
-                            
-                            for (const [key, path] of Object.entries(textToPathMap)) {
-                                if (textLower.includes(key)) {
-                                    const url = new URL(path, baseUrl).href;
-                                    links.add(JSON.stringify({
-                                        href: url,
-                                        text: text.slice(0, 200)
-                                    }));
-                                    break;
-                                }
-                            }
                         }
                     } catch (e) {}
                 });
+                
+                // 7. 실제 클릭해서 URL 변경을 확인하는 방법 (React Router navigate 감지)
+                // 이 방법은 실제로 요소를 클릭하고 URL 변경을 감지하지만 시간이 오래 걸림
+                // 일단 주석 처리하고, 실제 DOM 속성만 사용
+                /*
+                // 클릭 가능한 요소들을 실제로 클릭해서 URL 변경 확인
+                document.querySelectorAll('[class*="MuiListItemButton"], button[class*="nav"], a').forEach(async el => {
+                    try {
+                        const currentUrl = window.location.href;
+                        el.click();
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        const newUrl = window.location.href;
+                        if (newUrl !== currentUrl) {
+                            links.add(JSON.stringify({
+                                href: newUrl,
+                                text: (el.innerText || el.textContent || '').trim().slice(0, 200)
+                            }));
+                            window.history.back();
+                            await new Promise(resolve => setTimeout(resolve, 200));
+                        }
+                    } catch (e) {}
+                });
+                */
                 
                 return Array.from(links).map(s => JSON.parse(s));
             }
