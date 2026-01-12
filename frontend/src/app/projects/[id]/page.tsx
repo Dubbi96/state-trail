@@ -10,6 +10,7 @@ export default function ProjectDashboardPage() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
   const [crawlStrategy, setCrawlStrategy] = useState<"BFS" | "MCS" | "BROWSER_BFS" | "BROWSER_MCS">("BROWSER_MCS");
+  const [capturingAuthProfileId, setCapturingAuthProfileId] = useState<string | null>(null);
 
   const projectQuery = useQuery({
     queryKey: ["projects", projectId],
@@ -61,61 +62,101 @@ export default function ProjectDashboardPage() {
           <div className="mt-3 space-y-2">
             {authProfilesQuery.data?.items.map((a) => (
               <div key={a.id} className="rounded-lg border border-slate-200 p-3">
-                <div className="font-medium">{a.name}</div>
-                <div className="text-sm text-slate-600">{a.type}</div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-medium">{a.name}</div>
+                    <div className="text-sm text-slate-600">{a.type}</div>
+                  </div>
+                  <button
+                    className="rounded-md border border-red-200 px-2 py-1 text-xs text-red-700 hover:bg-red-50"
+                    onClick={async () => {
+                      if (confirm(`정말 ${a.name}을(를) 삭제하시겠습니까?`)) {
+                        try {
+                          await api.authProfiles.delete(projectId, a.id);
+                          authProfilesQuery.refetch();
+                        } catch (err: any) {
+                          alert(`삭제 실패: ${err.message || err}`);
+                        }
+                      }
+                    }}
+                  >
+                    삭제
+                  </button>
+                </div>
                 {a.type === "STORAGE_STATE" && (
                   <div className="mt-2 space-y-2">
-                    <div>
-                      <label className="block text-xs text-slate-600 mb-1">
-                        Storage State 자동 캡처 (권장)
-                      </label>
-                      <button
-                        className="rounded-md bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-700"
-                        onClick={async () => {
-                          const loginUrl = projectQuery.data?.baseUrl ?? "https://teds-roasting.netlify.app/";
-                          try {
-                            const result = await api.authProfiles.captureStorageState(
-                              projectId,
-                              a.id,
-                              loginUrl,
-                              5 // 5분 타임아웃
-                            );
-                            alert(result.message);
-                            // 일정 시간 후 새로고침 (storage state 저장 확인)
-                            setTimeout(() => {
-                              authProfilesQuery.refetch();
-                            }, 10000);
-                          } catch (err: any) {
-                            alert(`캡처 실패: ${err.message || err}`);
-                          }
-                        }}
-                      >
-                        브라우저 열기 및 로그인 캡처
-                      </button>
-                    </div>
-                    <div>
-                      <label className="block text-xs text-slate-600 mb-1">
-                        또는 수동 업로드 (Playwright에서 추출한 .json 파일)
-                      </label>
-                      <input
-                        type="file"
-                        accept=".json"
-                        className="text-xs"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
+                    {capturingAuthProfileId === a.id ? (
+                      <div>
+                        <div className="mb-2 text-xs text-slate-600">
+                          브라우저에서 로그인을 완료한 후 아래 버튼을 눌러주세요.
+                        </div>
+                        <button
+                          className="rounded-md bg-green-600 px-3 py-1.5 text-xs text-white hover:bg-green-700"
+                          onClick={async () => {
                             try {
-                              await api.authProfiles.uploadStorageState(projectId, a.id, file);
+                              const result = await api.authProfiles.completeCaptureStorageState(projectId, a.id);
+                              alert(result.message);
+                              setCapturingAuthProfileId(null);
                               authProfilesQuery.refetch();
-                              alert("Storage state 업로드 완료!");
-                            } catch (err) {
-                              alert(`업로드 실패: ${err}`);
+                            } catch (err: any) {
+                              alert(`완료 실패: ${err.message || err}`);
                             }
-                            e.target.value = ""; // Reset input
-                          }
-                        }}
-                      />
-                    </div>
+                          }}
+                        >
+                          완료 및 저장
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div>
+                          <label className="block text-xs text-slate-600 mb-1">
+                            Storage State 자동 캡처 (권장)
+                          </label>
+                          <button
+                            className="rounded-md bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-700"
+                            onClick={async () => {
+                              const loginUrl = projectQuery.data?.baseUrl ?? "https://teds-roasting.netlify.app/";
+                              try {
+                                const result = await api.authProfiles.captureStorageState(
+                                  projectId,
+                                  a.id,
+                                  loginUrl
+                                );
+                                alert(result.message);
+                                setCapturingAuthProfileId(a.id);
+                              } catch (err: any) {
+                                alert(`캡처 실패: ${err.message || err}`);
+                              }
+                            }}
+                          >
+                            브라우저 열기
+                          </button>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-600 mb-1">
+                            또는 수동 업로드 (Playwright에서 추출한 .json 파일)
+                          </label>
+                          <input
+                            type="file"
+                            accept=".json"
+                            className="text-xs"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                try {
+                                  await api.authProfiles.uploadStorageState(projectId, a.id, file);
+                                  authProfilesQuery.refetch();
+                                  alert("Storage state 업로드 완료!");
+                                } catch (err) {
+                                  alert(`업로드 실패: ${err}`);
+                                }
+                                e.target.value = ""; // Reset input
+                              }
+                            }}
+                          />
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>

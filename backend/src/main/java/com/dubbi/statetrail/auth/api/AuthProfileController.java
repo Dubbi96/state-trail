@@ -8,12 +8,12 @@ import com.dubbi.statetrail.auth.service.StorageStateCaptureService;
 import com.dubbi.statetrail.common.dto.ListResponse;
 import com.dubbi.statetrail.common.storage.ObjectStorageService;
 import com.dubbi.statetrail.project.domain.ProjectRepository;
-import java.time.Duration;
 import java.util.Map;
 import jakarta.validation.Valid;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -96,7 +96,7 @@ public class AuthProfileController {
     }
 
     @PostMapping("/{authProfileId}/capture-storage-state")
-    public ResponseEntity<Map<String, Object>> captureStorageState(
+    public ResponseEntity<Map<String, Object>> startCaptureStorageState(
             @PathVariable UUID projectId,
             @PathVariable UUID authProfileId,
             @RequestBody CaptureStorageStateRequest req
@@ -113,17 +113,46 @@ public class AuthProfileController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
         }
 
-        // 비동기로 storage state 캡처 시작
-        storageStateCaptureService.captureStorageState(
-                authProfileId,
-                req.loginUrl(),
-                Duration.ofMinutes(req.timeoutMinutes())
-        );
+        // 브라우저 열기
+        storageStateCaptureService.startCaptureSession(authProfileId, req.loginUrl());
 
         return ResponseEntity.ok(Map.of(
                 "ok", true,
-                "message", "브라우저가 열렸습니다. 로그인을 완료해주세요. 로그인 완료 후 자동으로 storage state가 저장됩니다."
+                "message", "브라우저가 열렸습니다. 로그인을 완료한 후 '완료' 버튼을 눌러주세요."
         ));
+    }
+
+    @PostMapping("/{authProfileId}/complete-capture-storage-state")
+    public ResponseEntity<Map<String, Object>> completeCaptureStorageState(
+            @PathVariable UUID projectId,
+            @PathVariable UUID authProfileId
+    ) {
+        var profileOpt = authProfileRepository.findById(authProfileId);
+        if (profileOpt.isEmpty()) return ResponseEntity.notFound().build();
+        
+        var profile = profileOpt.get();
+        if (!profile.getProject().getId().equals(projectId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
+        try {
+            String objectKey = storageStateCaptureService.completeCaptureStorageState(authProfileId);
+            return ResponseEntity.ok(Map.of(
+                    "ok", true,
+                    "message", "Storage state가 성공적으로 저장되었습니다.",
+                    "objectKey", objectKey
+            ));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of(
+                    "ok", false,
+                    "error", e.getMessage()
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
+                    "ok", false,
+                    "error", e.getMessage()
+            ));
+        }
     }
 
     @PutMapping("/{authProfileId}/login-script")
@@ -154,7 +183,24 @@ public class AuthProfileController {
 
     public record UpdateLoginScriptRequest(String script) {}
     
-    public record CaptureStorageStateRequest(String loginUrl, int timeoutMinutes) {}
+    public record CaptureStorageStateRequest(String loginUrl) {}
+    
+    @DeleteMapping("/{authProfileId}")
+    public ResponseEntity<Void> delete(
+            @PathVariable UUID projectId,
+            @PathVariable UUID authProfileId
+    ) {
+        var profileOpt = authProfileRepository.findById(authProfileId);
+        if (profileOpt.isEmpty()) return ResponseEntity.notFound().build();
+        
+        var profile = profileOpt.get();
+        if (!profile.getProject().getId().equals(projectId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        
+        authProfileRepository.delete(profile);
+        return ResponseEntity.noContent().build();
+    }
 }
 
 

@@ -32,7 +32,8 @@ export const api = {
     list: () => http<ListResponse<ProjectDTO>>(`/api/projects`),
     get: (projectId: string) => http<ProjectDTO>(`/api/projects/${projectId}`),
     create: (body: { name: string; baseUrl: string; allowlistRules: Record<string, unknown> }) =>
-      http<ProjectDTO>(`/api/projects`, { method: "POST", body: JSON.stringify(body) })
+      http<ProjectDTO>(`/api/projects`, { method: "POST", body: JSON.stringify(body) }),
+    delete: (projectId: string) => http<void>(`/api/projects/${projectId}`, { method: "DELETE" })
   },
   authProfiles: {
     list: (projectId: string) => http<ListResponse<AuthProfileDTO>>(`/api/projects/${projectId}/auth-profiles`),
@@ -50,13 +51,25 @@ export const api = {
         return res.json() as Promise<AuthProfileDTO>;
       });
     },
-    captureStorageState: (projectId: string, authProfileId: string, loginUrl: string, timeoutMinutes: number = 5) => {
+    captureStorageState: (projectId: string, authProfileId: string, loginUrl: string) => {
       return http<{ ok: boolean; message: string }>(
         `/api/projects/${projectId}/auth-profiles/${authProfileId}/capture-storage-state`,
         {
           method: "POST",
-          body: JSON.stringify({ loginUrl, timeoutMinutes })
+          body: JSON.stringify({ loginUrl })
         }
+      );
+    },
+    completeCaptureStorageState: (projectId: string, authProfileId: string) => {
+      return http<{ ok: boolean; message: string; objectKey?: string }>(
+        `/api/projects/${projectId}/auth-profiles/${authProfileId}/complete-capture-storage-state`,
+        { method: "POST" }
+      );
+    },
+    delete: (projectId: string, authProfileId: string) => {
+      return http<void>(
+        `/api/projects/${projectId}/auth-profiles/${authProfileId}`,
+        { method: "DELETE" }
       );
     }
   },

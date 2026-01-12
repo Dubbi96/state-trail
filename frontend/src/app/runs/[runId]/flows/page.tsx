@@ -42,12 +42,31 @@ export default function RunFlowsPage() {
           {flowsQuery.data?.items?.map((f) => (
             <div key={f.id} className="rounded-lg border border-slate-200 p-3">
               <div className="flex items-center justify-between">
-                <div className="font-medium">{f.name}</div>
-                <Link href={`/flows/${f.id}/test`} className="text-sm hover:underline">
-                  Generate Test
-                </Link>
+                <div className="flex-1">
+                  <div className="font-medium">{f.name}</div>
+                  <div className="text-sm text-slate-600">steps: {f.steps.length}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Link href={`/flows/${f.id}/test`} className="text-sm hover:underline">
+                    Generate Test
+                  </Link>
+                  <button
+                    className="rounded-md border border-red-200 px-2 py-1 text-xs text-red-700 hover:bg-red-50"
+                    onClick={async () => {
+                      if (confirm(`정말 ${f.name} 플로우를 삭제하시겠습니까?`)) {
+                        try {
+                          await api.flows.delete(f.id);
+                          flowsQuery.refetch();
+                        } catch (err: any) {
+                          alert(`삭제 실패: ${err.message || err}`);
+                        }
+                      }
+                    }}
+                  >
+                    삭제
+                  </button>
+                </div>
               </div>
-              <div className="text-sm text-slate-600">steps: {f.steps.length}</div>
             </div>
           ))}
           {!flowsQuery.data?.items?.length && (
