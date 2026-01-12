@@ -21,6 +21,10 @@ import com.dubbi.statetrail.crawl.domain.CrawlRunRepository;
 import com.dubbi.statetrail.crawl.web.AllowlistRules;
 import com.dubbi.statetrail.crawl.web.CrawlBudget;
 import com.dubbi.statetrail.crawl.web.CrawlStrategy;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.net.URI;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -142,31 +146,74 @@ public class WebCrawlerService {
             Browser browser = null;
             BrowserContext context = null;
             Page page = null;
+            Path tempStorageStatePath = null;
             try {
                 if (browserMode) {
                     playwright = Playwright.create();
                     browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(true));
                     
-                    // TODO: Auth 컨텍스트 주입
-                    // Playwright Java API의 storage state 주입 방법을 확인 후 구현 필요
-                    // 현재는 기본 컨텍스트로 생성 (비로그인 상태)
+                    // Auth 컨텍스트 주입
                     if (run.getAuthProfile() != null) {
                         var authProfile = authProfileRepository.findById(run.getAuthProfile().getId()).orElse(null);
                         if (authProfile != null) {
                             if (authProfile.getType() == com.dubbi.statetrail.auth.domain.AuthProfileType.STORAGE_STATE 
                                     && authProfile.getStorageStateObjectKey() != null) {
-                                System.out.printf("[Crawl] Auth profile '%s' has storage state, but injection not yet implemented%n", authProfile.getName());
-                                // TODO: Storage state를 임시 파일로 저장하거나 Playwright API를 통해 주입
+                                try {
+                                    // MinIO에서 storage state 로드
+                                    var storageStateStream = objectStorageService.loadStorageState(authProfile.getStorageStateObjectKey());
+                                    var storageStateJson = new String(storageStateStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                                    
+                                    // 임시 파일로 저장 (Playwright는 파일 경로를 요구)
+                                    tempStorageStatePath = Files.createTempFile("playwright-storage-state-" + runId + "-", ".json");
+                                    Files.write(tempStorageStatePath, storageStateJson.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                                    
+                                    System.out.printf("[Crawl] Loaded storage state for auth profile: %s (temp file: %s)%n", 
+                                        authProfile.getName(), tempStorageStatePath);
+                                } catch (Exception e) {
+                                    System.err.printf("[Crawl] Failed to load storage state: %s%n", e.getMessage());
+                                    e.printStackTrace();
+                                }
                             } else if (authProfile.getType() == com.dubbi.statetrail.auth.domain.AuthProfileType.SCRIPT_LOGIN
                                     && authProfile.getLoginScript() != null) {
-                                System.out.printf("[Crawl] Auth profile '%s' has login script, but execution not yet implemented%n", authProfile.getName());
-                                // TODO: 로그인 스크립트 실행 로직 추가
+                                System.out.printf("[Crawl] Auth profile '%s' has login script, will execute after navigation%n", authProfile.getName());
+                                // 로그인 스크립트는 startUrl로 이동한 후 실행 (아래에서 처리)
                             }
                         }
                     }
                     
-                    context = browser.newContext();
+                    // Storage state가 있으면 파일 경로로 주입, 없으면 기본 컨텍스트 생성
+                    if (tempStorageStatePath != null) {
+                        context = browser.newContext(new Browser.NewContextOptions()
+                                .setStorageStatePath(tempStorageStatePath));
+                    } else {
+                        context = browser.newContext();
+                    }
                     page = context.newPage();
+                    
+                    // SCRIPT_LOGIN 타입인 경우 로그인 스크립트 실행
+                    if (run.getAuthProfile() != null && page != null) {
+                        var authProfile = authProfileRepository.findById(run.getAuthProfile().getId()).orElse(null);
+                        if (authProfile != null 
+                                && authProfile.getType() == com.dubbi.statetrail.auth.domain.AuthProfileType.SCRIPT_LOGIN
+                                && authProfile.getLoginScript() != null) {
+                            try {
+                                // startUrl로 이동
+                                page.navigate(run.getStartUrl(), new Page.NavigateOptions().setTimeout(15_000));
+                                page.waitForLoadState(LoadState.DOMCONTENTLOADED);
+                                
+                                // 로그인 스크립트 실행 (JavaScript로 평가)
+                                // 주의: 실제 로그인 스크립트는 Playwright API 호출로 변환되어야 함
+                                // 현재는 간단히 JavaScript로 실행 (향후 더 정교한 파싱 필요)
+                                page.evaluate(authProfile.getLoginScript());
+                                page.waitForTimeout(1000); // 로그인 완료 대기
+                                
+                                System.out.printf("[Crawl] Executed login script for auth profile: %s%n", authProfile.getName());
+                            } catch (Exception e) {
+                                System.err.printf("[Crawl] Failed to execute login script: %s%n", e.getMessage());
+                                e.printStackTrace();
+                            }
+                        }
+                    }
                 }
 
             while (Instant.now().isBefore(deadline)) {
@@ -316,6 +363,15 @@ public class WebCrawlerService {
                 if (context != null) context.close();
                 if (browser != null) browser.close();
                 if (playwright != null) playwright.close();
+                
+                // 임시 storage state 파일 정리
+                if (tempStorageStatePath != null) {
+                    try {
+                        Files.deleteIfExists(tempStorageStatePath);
+                    } catch (IOException e) {
+                        System.err.printf("[Crawl] Failed to delete temp storage state file: %s%n", e.getMessage());
+                    }
+                }
             }
 
             var finalStats = Map.<String, Object>of(
