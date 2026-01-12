@@ -9,7 +9,10 @@ import com.microsoft.playwright.Response;
 import com.microsoft.playwright.options.LoadState;
 import com.dubbi.statetrail.common.util.Hashing;
 import com.dubbi.statetrail.common.util.UrlPattern;
+import com.dubbi.statetrail.common.storage.ObjectStorageService;
 import com.dubbi.statetrail.crawl.web.UiSignatureExtractor;
+import com.dubbi.statetrail.auth.domain.AuthProfileRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.dubbi.statetrail.crawl.domain.CrawlLinkEntity;
 import com.dubbi.statetrail.crawl.domain.CrawlLinkRepository;
 import com.dubbi.statetrail.crawl.domain.CrawlPageEntity;
@@ -43,17 +46,26 @@ public class WebCrawlerService {
     private final CrawlPageRepository crawlPageRepository;
     private final CrawlLinkRepository crawlLinkRepository;
     private final CrawlRunEventHub eventHub;
+    private final ObjectStorageService objectStorageService;
+    private final AuthProfileRepository authProfileRepository;
+    private final ObjectMapper objectMapper;
 
     public WebCrawlerService(
             CrawlRunRepository crawlRunRepository,
             CrawlPageRepository crawlPageRepository,
             CrawlLinkRepository crawlLinkRepository,
-            CrawlRunEventHub eventHub
+            CrawlRunEventHub eventHub,
+            ObjectStorageService objectStorageService,
+            AuthProfileRepository authProfileRepository,
+            ObjectMapper objectMapper
     ) {
         this.crawlRunRepository = crawlRunRepository;
         this.crawlPageRepository = crawlPageRepository;
         this.crawlLinkRepository = crawlLinkRepository;
         this.eventHub = eventHub;
+        this.objectStorageService = objectStorageService;
+        this.authProfileRepository = authProfileRepository;
+        this.objectMapper = objectMapper;
     }
 
     @Async
@@ -134,6 +146,25 @@ public class WebCrawlerService {
                 if (browserMode) {
                     playwright = Playwright.create();
                     browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(true));
+                    
+                    // TODO: Auth 컨텍스트 주입
+                    // Playwright Java API의 storage state 주입 방법을 확인 후 구현 필요
+                    // 현재는 기본 컨텍스트로 생성 (비로그인 상태)
+                    if (run.getAuthProfile() != null) {
+                        var authProfile = authProfileRepository.findById(run.getAuthProfile().getId()).orElse(null);
+                        if (authProfile != null) {
+                            if (authProfile.getType() == com.dubbi.statetrail.auth.domain.AuthProfileType.STORAGE_STATE 
+                                    && authProfile.getStorageStateObjectKey() != null) {
+                                System.out.printf("[Crawl] Auth profile '%s' has storage state, but injection not yet implemented%n", authProfile.getName());
+                                // TODO: Storage state를 임시 파일로 저장하거나 Playwright API를 통해 주입
+                            } else if (authProfile.getType() == com.dubbi.statetrail.auth.domain.AuthProfileType.SCRIPT_LOGIN
+                                    && authProfile.getLoginScript() != null) {
+                                System.out.printf("[Crawl] Auth profile '%s' has login script, but execution not yet implemented%n", authProfile.getName());
+                                // TODO: 로그인 스크립트 실행 로직 추가
+                            }
+                        }
+                    }
+                    
                     context = browser.newContext();
                     page = context.newPage();
                 }
@@ -163,12 +194,34 @@ public class WebCrawlerService {
 
                     current.markFetched(result.status, result.contentType, result.title, result.htmlSnapshot);
                     
-                    // 브라우저 모드인 경우 UI 시그니처 저장 (스크린샷과 네트워크 로그는 나중에 MinIO 저장 서비스 구현 후)
-                    if (browserMode && result.uiSignature() != null && !result.uiSignature().isEmpty()) {
-                        // TODO: 스크린샷과 네트워크 로그를 MinIO에 저장하고 objectKey를 설정
-                        // 현재는 UI 시그니처만 저장
-                        current.setUiSignature(result.uiSignature());
-                        // networkRequests는 나중에 HAR로 변환하여 저장 예정
+                    // 브라우저 모드인 경우 UI 시그니처, 스크린샷, 네트워크 로그 저장
+                    if (browserMode && page != null) {
+                        if (result.uiSignature() != null && !result.uiSignature().isEmpty()) {
+                            current.setUiSignature(result.uiSignature());
+                        }
+                        
+                        // 스크린샷 캡처 및 저장
+                        try {
+                            byte[] screenshot = page.screenshot(new Page.ScreenshotOptions().setFullPage(false));
+                            String screenshotKey = objectStorageService.saveScreenshot(runId, current.getId(), screenshot);
+                            current.setScreenshotObjectKey(screenshotKey);
+                            System.out.printf("[Crawl] Saved screenshot: %s%n", screenshotKey);
+                        } catch (Exception e) {
+                            System.err.printf("[Crawl] Failed to save screenshot: %s%n", e.getMessage());
+                        }
+                        
+                        // 네트워크 로그를 HAR 형식으로 변환하여 저장
+                        if (result.networkRequests() != null && !result.networkRequests().isEmpty()) {
+                            try {
+                                Map<String, Object> har = createHarFromRequests(result.networkRequests());
+                                String harJson = objectMapper.writeValueAsString(har);
+                                String networkLogKey = objectStorageService.saveNetworkLog(runId, current.getId(), harJson);
+                                current.setNetworkLogObjectKey(networkLogKey);
+                                System.out.printf("[Crawl] Saved network log: %s%n", networkLogKey);
+                            } catch (Exception e) {
+                                System.err.printf("[Crawl] Failed to save network log: %s%n", e.getMessage());
+                            }
+                        }
                     }
                     
                     crawlPageRepository.save(current);
@@ -325,12 +378,13 @@ public class WebCrawlerService {
         // 네트워크 요청 추적 시작
         List<Map<String, Object>> networkRequests = new ArrayList<>();
         
+        // Request 리스너 등록
         page.onRequest(request -> {
             Map<String, Object> req = new HashMap<>();
             req.put("url", request.url());
             req.put("method", request.method());
-            req.put("resourceType", request.resourceType());
-            req.put("headers", request.headers());
+            req.put("resourceType", request.resourceType() != null ? request.resourceType() : "other");
+            req.put("headers", request.headers() != null ? request.headers() : Map.of());
             networkRequests.add(req);
         });
         
@@ -414,6 +468,34 @@ public class WebCrawlerService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /**
+     * 네트워크 요청 리스트를 HAR 형식으로 변환
+     */
+    private Map<String, Object> createHarFromRequests(List<Map<String, Object>> requests) {
+        Map<String, Object> har = new HashMap<>();
+        Map<String, Object> log = new HashMap<>();
+        
+        List<Map<String, Object>> entries = new ArrayList<>();
+        for (Map<String, Object> req : requests) {
+            Map<String, Object> entry = new HashMap<>();
+            entry.put("request", Map.of(
+                    "method", req.getOrDefault("method", "GET"),
+                    "url", req.getOrDefault("url", ""),
+                    "headers", req.getOrDefault("headers", Map.of())
+            ));
+            entry.put("response", Map.of(
+                    "status", 200, // 실제 응답 정보는 나중에 추가 가능
+                    "headers", Map.of()
+            ));
+            entries.add(entry);
+        }
+        
+        log.put("version", "1.2");
+        log.put("entries", entries);
+        har.put("log", log);
+        return har;
     }
 
     private CrawlPageEntity getOrCreatePage(UUID runId, String url, int depth) {
