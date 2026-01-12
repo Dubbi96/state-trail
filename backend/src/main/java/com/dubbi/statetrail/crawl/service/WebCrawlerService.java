@@ -501,13 +501,15 @@ public class WebCrawlerService {
         // UI 시그니처 추출
         Map<String, Object> uiSignature = UiSignatureExtractor.extractFromPage(page);
 
-        Set<LinkOut> links = extractLinksFromBrowser(page);
+        Set<LinkOut> links = extractLinksFromBrowser(page, uiSignature);
         String snapshot = html == null ? null : (html.length() > 200_000 ? html.substring(0, 200_000) : html);
         return new PageFetchResult(status, contentType, title, snapshot, links, uiSignature, networkRequests);
     }
 
-    private static Set<LinkOut> extractLinksFromBrowser(Page page) {
-        // SPA(React Router 등) 지원: 다양한 형태의 링크 추출
+    private static Set<LinkOut> extractLinksFromBrowser(Page page, Map<String, Object> uiSignature) {
+        Set<LinkOut> links = new HashSet<>();
+        
+        // 먼저 일반적인 <a href> 링크 추출
         Object raw = page.evaluate("""
             () => {
                 const links = new Set();
@@ -782,7 +784,114 @@ public class WebCrawlerService {
         }
         
         System.out.printf("[Crawl] Browser: Extracted %d links from page (after deduplication)%n", out.size());
+        
+        // 일반 링크가 0개이고, UI Signature에 버튼이 있으면 실제 클릭 시도
+        if (out.isEmpty() && uiSignature != null) {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> ctas = (List<Map<String, Object>>) uiSignature.get("ctas");
+            if (ctas != null && !ctas.isEmpty()) {
+                System.out.printf("[Crawl] Browser: No <a> tags found, attempting to discover links by clicking %d buttons%n", ctas.size());
+                Set<LinkOut> clickedLinks = extractLinksByClicking(page, ctas);
+                out.addAll(clickedLinks);
+                System.out.printf("[Crawl] Browser: Discovered %d additional links by clicking buttons%n", clickedLinks.size());
+            }
+        }
+        
         return out;
+    }
+    
+    private static Set<LinkOut> extractLinksByClicking(Page page, List<Map<String, Object>> ctas) {
+        Set<LinkOut> links = new HashSet<>();
+        String originalUrl = page.url();
+        
+        // 최대 10개까지만 클릭 (시간 제한)
+        int maxClicks = Math.min(ctas.size(), 10);
+        
+        for (int i = 0; i < maxClicks; i++) {
+            Map<String, Object> cta = ctas.get(i);
+            String selector = (String) cta.get("selector");
+            String text = (String) cta.get("text");
+            
+            if (selector == null || selector.isBlank() || text == null || text.isBlank()) {
+                continue;
+            }
+            
+            try {
+                // 현재 URL 저장
+                String beforeUrl = page.url();
+                
+                // 요소 찾기 및 클릭
+                try {
+                    page.locator(selector).first().click();
+                } catch (Exception e) {
+                    // 요소를 찾을 수 없거나 클릭할 수 없는 경우
+                    System.out.printf("[Crawl] Browser: Failed to click button '%s' with selector '%s': %s%n", 
+                            text, selector, e.getMessage());
+                    continue;
+                }
+                
+                // 네비게이션 완료 대기
+                try {
+                    page.waitForLoadState(LoadState.NETWORKIDLE, new Page.WaitForLoadStateOptions().setTimeout(3000));
+                } catch (Exception e) {
+                    // 타임아웃되어도 계속
+                }
+                page.waitForTimeout(500); // 추가 안정화 시간
+                
+                // URL 변경 확인
+                String afterUrl = page.url();
+                if (!afterUrl.equals(beforeUrl) && !afterUrl.equals(originalUrl)) {
+                    // 새로운 URL 발견
+                    try {
+                        java.net.URI uri = java.net.URI.create(afterUrl);
+                        // fragment 제거
+                        String cleanUrl = new java.net.URI(uri.getScheme(), uri.getUserInfo(), uri.getHost(), uri.getPort(), 
+                                uri.getPath(), uri.getQuery(), null).toString();
+                        
+                        if (cleanUrl.startsWith("http://") || cleanUrl.startsWith("https://")) {
+                            links.add(new LinkOut(cleanUrl, text));
+                            System.out.printf("[Crawl] Browser: Discovered link by clicking '%s': %s%n", text, cleanUrl);
+                        }
+                    } catch (Exception e) {
+                        // URL 파싱 실패
+                    }
+                }
+                
+                // 원래 페이지로 돌아가기 (뒤로 가기)
+                if (!afterUrl.equals(originalUrl)) {
+                    try {
+                        page.goBack(new Page.GoBackOptions().setTimeout(3000));
+                        page.waitForLoadState(LoadState.DOMCONTENTLOADED);
+                        page.waitForLoadState(LoadState.NETWORKIDLE, new Page.WaitForLoadStateOptions().setTimeout(3000));
+                        page.waitForTimeout(500);
+                    } catch (Exception e) {
+                        // 뒤로 가기 실패 시 원래 URL로 직접 이동
+                        try {
+                            page.navigate(originalUrl, new Page.NavigateOptions().setTimeout(5000));
+                            page.waitForLoadState(LoadState.DOMCONTENTLOADED);
+                            page.waitForTimeout(1000);
+                        } catch (Exception e2) {
+                            // 복구 실패 시 중단
+                            System.out.printf("[Crawl] Browser: Failed to return to original URL, stopping click-based discovery%n");
+                            break;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                System.out.printf("[Crawl] Browser: Error while clicking button '%s': %s%n", text, e.getMessage());
+                // 에러 발생 시 원래 URL로 복구 시도
+                try {
+                    page.navigate(originalUrl, new Page.NavigateOptions().setTimeout(5000));
+                    page.waitForLoadState(LoadState.DOMCONTENTLOADED);
+                    page.waitForTimeout(500);
+                } catch (Exception e2) {
+                    // 복구 실패 시 중단
+                    break;
+                }
+            }
+        }
+        
+        return links;
     }
 
     private static Set<LinkOut> extractLinks(Document doc) {
