@@ -852,11 +852,21 @@ public class WebCrawlerService {
             try {
                 // 요소 찾기 및 클릭
                 try {
-                    page.locator(selector).first().click();
+                    var locator = page.locator(selector);
+                    int count = locator.count();
+                    System.out.printf("[Crawl] Browser: Found %d elements with selector '%s' for button '%s'%n", 
+                            count, selector, text);
+                    if (count == 0) {
+                        System.out.printf("[Crawl] Browser: No elements found with selector '%s', skipping%n", selector);
+                        continue;
+                    }
+                    locator.first().click();
+                    System.out.printf("[Crawl] Browser: Clicked button '%s' with selector '%s'%n", text, selector);
                 } catch (Exception e) {
                     // 요소를 찾을 수 없거나 클릭할 수 없는 경우
                     System.out.printf("[Crawl] Browser: Failed to click button '%s' with selector '%s': %s%n", 
                             text, selector, e.getMessage());
+                    e.printStackTrace();
                     continue;
                 }
                 
