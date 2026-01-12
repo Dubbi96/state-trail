@@ -784,11 +784,12 @@ public class WebCrawlerService {
                 return new StateChangeResult(false, beforeUrl, beforeDomHash, null, List.of());
             }
             
-            // 아코디언이 실제로 펼쳐질 때까지 대기
+            // 아코디언이 실제로 펼쳐질 때까지 대기 (더 정교한 감지)
             System.out.printf("[Crawl] Browser: Waiting for accordion '%s' to expand...%n", action.text());
             boolean accordionIsExpanded = false;
+            int newLinksCount = 0;
             try {
-                // 아코디언이 펼쳐질 때까지 최대 3초 대기
+                // 아코디언이 펼쳐지고 실제로 내용이 나타날 때까지 최대 5초 대기
                 String textEscaped = action.text().replace("\\", "\\\\").replace("\"", "\\\"");
                 Object expandedResult = page.waitForFunction(String.format("""
                     () => {
@@ -797,22 +798,99 @@ public class WebCrawlerService {
                         for (const btn of buttons) {
                             const btnText = (btn.innerText || btn.textContent || '').trim();
                             if (btnText === text) {
-                                const expanded = btn.getAttribute('aria-expanded') === 'true' ||
-                                               btn.closest('[aria-expanded="true"]') !== null ||
-                                               btn.closest('.Mui-expanded') !== null ||
-                                               btn.closest('.MuiAccordion-expanded') !== null;
-                                return expanded;
+                                // 1. aria-expanded 확인
+                                const ariaExpanded = btn.getAttribute('aria-expanded') === 'true' ||
+                                                    btn.closest('[aria-expanded="true"]') !== null;
+                                
+                                // 2. MUI 클래스 확인
+                                const muiExpanded = btn.closest('.Mui-expanded') !== null ||
+                                                   btn.closest('.MuiAccordion-expanded') !== null;
+                                
+                                // 3. 아코디언 패널 찾기
+                                let accordionPanel = btn.closest('.MuiAccordion-root');
+                                if (!accordionPanel) {
+                                    accordionPanel = btn.parentElement;
+                                    while (accordionPanel && !accordionPanel.classList.contains('MuiAccordion-root')) {
+                                        accordionPanel = accordionPanel.parentElement;
+                                    }
+                                }
+                                
+                                // 4. 패널이 실제로 보이는지 확인 (display, height, visibility)
+                                let panelVisible = false;
+                                if (accordionPanel) {
+                                    const panelDetails = accordionPanel.querySelector('.MuiAccordionDetails-root, .MuiCollapse-root, [class*="AccordionDetails"], [class*="Collapse"]');
+                                    if (panelDetails) {
+                                        const style = window.getComputedStyle(panelDetails);
+                                        const height = panelDetails.offsetHeight || panelDetails.clientHeight;
+                                        panelVisible = style.display !== 'none' && 
+                                                     style.visibility !== 'hidden' && 
+                                                     height > 0;
+                                    }
+                                }
+                                
+                                // 5. 펼쳐진 패널 내부에 링크가 있는지 확인
+                                let hasLinks = false;
+                                if (accordionPanel) {
+                                    const links = accordionPanel.querySelectorAll('a[href], [class*="ListItemButton"] a, [class*="ListItem-root"] a, [role="link"]');
+                                    hasLinks = links.length > 0;
+                                }
+                                
+                                // 6. 펼쳐진 패널 내부에 새로운 버튼/메뉴 항목이 있는지 확인
+                                let hasNewItems = false;
+                                if (accordionPanel) {
+                                    const items = accordionPanel.querySelectorAll('[class*="ListItem"], [class*="MenuItem"], [role="menuitem"]');
+                                    hasNewItems = items.length > 0;
+                                }
+                                
+                                // 아코디언이 펼쳐졌고 실제로 내용이 보이는 경우
+                                const expanded = ariaExpanded || muiExpanded;
+                                const hasContent = panelVisible || hasLinks || hasNewItems;
+                                
+                                return expanded && hasContent;
                             }
                         }
                         return false;
                     }
-                """, textEscaped), new Page.WaitForFunctionOptions().setTimeout(3000));
+                """, textEscaped), new Page.WaitForFunctionOptions().setTimeout(5000));
                 accordionIsExpanded = expandedResult instanceof Boolean && (Boolean) expandedResult;
-                System.out.printf("[Crawl] Browser: Accordion expanded after click: %s (waited for expansion)%n", accordionIsExpanded);
+                
+                // 펼쳐진 패널 내부의 링크 개수 확인
+                if (accordionIsExpanded) {
+                    String textEscaped2 = action.text().replace("\\", "\\\\").replace("\"", "\\\"");
+                    Object linksCount = page.evaluate(String.format("""
+                        () => {
+                            const text = "%s";
+                            const buttons = document.querySelectorAll('button, [role="button"]');
+                            for (const btn of buttons) {
+                                const btnText = (btn.innerText || btn.textContent || '').trim();
+                                if (btnText === text) {
+                                    let accordionPanel = btn.closest('.MuiAccordion-root');
+                                    if (!accordionPanel) {
+                                        accordionPanel = btn.parentElement;
+                                        while (accordionPanel && !accordionPanel.classList.contains('MuiAccordion-root')) {
+                                            accordionPanel = accordionPanel.parentElement;
+                                        }
+                                    }
+                                    if (accordionPanel) {
+                                        const links = accordionPanel.querySelectorAll('a[href], [class*="ListItemButton"], [class*="ListItem-root"], [role="link"], [role="menuitem"]');
+                                        return links.length;
+                                    }
+                                }
+                            }
+                            return 0;
+                        }
+                    """, textEscaped2));
+                    if (linksCount instanceof Number) {
+                        newLinksCount = ((Number) linksCount).intValue();
+                    }
+                }
+                
+                System.out.printf("[Crawl] Browser: Accordion expanded after click: %s (waited for expansion, found %d new items)%n", 
+                        accordionIsExpanded, newLinksCount);
             } catch (Exception e) {
                 // 타임아웃되었거나 아코디언이 아닐 수 있음
                 System.out.printf("[Crawl] Browser: Timeout waiting for accordion expansion or not an accordion: %s%n", e.getMessage());
-                // 다시 한 번 확인
+                // 다시 한 번 확인 (간단한 버전)
                 String textEscaped = action.text().replace("\\", "\\\\").replace("\"", "\\\"");
                 Object accordionExpanded = page.evaluate(String.format("""
                     () => {
@@ -825,7 +903,18 @@ public class WebCrawlerService {
                                                btn.closest('[aria-expanded="true"]') !== null ||
                                                btn.closest('.Mui-expanded') !== null ||
                                                btn.closest('.MuiAccordion-expanded') !== null;
-                                return expanded;
+                                
+                                // 패널 내부 링크 확인
+                                let accordionPanel = btn.closest('.MuiAccordion-root');
+                                if (!accordionPanel) {
+                                    accordionPanel = btn.parentElement;
+                                    while (accordionPanel && !accordionPanel.classList.contains('MuiAccordion-root')) {
+                                        accordionPanel = accordionPanel.parentElement;
+                                    }
+                                }
+                                const hasLinks = accordionPanel && accordionPanel.querySelectorAll('a[href], [class*="ListItem"]').length > 0;
+                                
+                                return expanded || hasLinks;
                             }
                         }
                         return false;
@@ -861,33 +950,42 @@ public class WebCrawlerService {
             boolean domHashChanged = !afterDomHash.equals(beforeDomHash);
             boolean ctaCountChanged = afterCTAs.size() != beforeCTAs.size();
             
-            // 아코디언이 펼쳐졌거나, DOM 해시가 변경되었거나, CTA 개수가 변경되었으면 상태 변화로 간주
-            boolean domChanged = accordionIsExpanded || domHashChanged || ctaCountChanged;
+            // 아코디언이 펼쳐졌거나, DOM 해시가 변경되었거나, CTA 개수가 변경되었거나, 새로운 링크가 발견되었으면 상태 변화로 간주
+            boolean domChanged = accordionIsExpanded || domHashChanged || ctaCountChanged || (newLinksCount > 0);
             
-            System.out.printf("[Crawl] Browser: State check - URL changed: %s, DOM hash changed: %s, CTA count changed: %s, Accordion expanded: %s%n",
-                    urlChanged, domHashChanged, ctaCountChanged, accordionIsExpanded);
+            System.out.printf("[Crawl] Browser: State check - URL changed: %s, DOM hash changed: %s, CTA count changed: %s, Accordion expanded: %s, New links found: %d%n",
+                    urlChanged, domHashChanged, ctaCountChanged, accordionIsExpanded, newLinksCount);
             
             // 상태 변화 감지: URL 변경 또는 DOM 변경(아코디언 펼침 포함)
-            if (urlChanged || domChanged) {
-                System.out.printf("[Crawl] Browser: State change detected - URL changed: %s, DOM changed: %s (accordion expanded: %s)%n", 
-                        urlChanged, domChanged, accordionIsExpanded);
+            // 중요: 아코디언이 펼쳐졌거나 새로운 링크가 발견되었으면 무조건 상태 변화로 간주
+            if (urlChanged || domChanged || accordionIsExpanded || newLinksCount > 0) {
+                System.out.printf("[Crawl] Browser: State change detected - URL changed: %s, DOM changed: %s, accordion expanded: %s, new links: %d%n", 
+                        urlChanged, domChanged, accordionIsExpanded, newLinksCount);
                 
                 // 새로 발견된 링크 추출 (펼쳐진 아코디언 내부 링크 포함)
                 List<LinkOut> discoveredLinks = extractStaticLinks(page).stream().toList();
-                System.out.printf("[Crawl] Browser: Found %d links in changed state%n", discoveredLinks.size());
+                System.out.printf("[Crawl] Browser: Found %d static links in changed state%n", discoveredLinks.size());
                 
-                // 아코디언이 펼쳐진 경우, 펼쳐진 영역에서 추가 링크 찾기
-                if (accordionIsExpanded) {
+                // 아코디언이 펼쳐진 경우, 펼쳐진 영역에서 추가 링크 찾기 (항상 실행)
+                if (accordionIsExpanded || newLinksCount > 0) {
                     List<LinkOut> accordionLinks = extractLinksFromExpandedAccordion(page, action.text());
                     discoveredLinks = new ArrayList<>(discoveredLinks);
                     discoveredLinks.addAll(accordionLinks);
                     System.out.printf("[Crawl] Browser: Found %d additional links from expanded accordion%n", accordionLinks.size());
+                    
+                    // 아코디언이 펼쳐졌지만 링크를 못 찾은 경우, 더 공격적으로 찾기
+                    if (accordionLinks.isEmpty() && newLinksCount > 0) {
+                        System.out.printf("[Crawl] Browser: Accordion expanded but no links found, trying aggressive extraction...%n");
+                        List<LinkOut> aggressiveLinks = extractLinksAggressively(page, action.text());
+                        discoveredLinks.addAll(aggressiveLinks);
+                        System.out.printf("[Crawl] Browser: Found %d links with aggressive extraction%n", aggressiveLinks.size());
+                    }
                 }
                 
                 return new StateChangeResult(true, afterUrl, afterDomHash, newUiSignature, discoveredLinks);
             } else {
-                System.out.printf("[Crawl] Browser: No state change detected (URL: %s, DOM: %s, accordion: %s)%n", 
-                        urlChanged, domChanged, accordionIsExpanded);
+                System.out.printf("[Crawl] Browser: No state change detected (URL: %s, DOM: %s, accordion: %s, new links: %d)%n", 
+                        urlChanged, domChanged, accordionIsExpanded, newLinksCount);
             }
             
             return new StateChangeResult(false, beforeUrl, beforeDomHash, null, List.of());
@@ -1015,6 +1113,150 @@ public class WebCrawlerService {
             }
         } catch (Exception e) {
             System.out.printf("[Crawl] Browser: Error extracting links from expanded accordion '%s': %s%n", 
+                    accordionText, e.getMessage());
+        }
+        
+        return links;
+    }
+    
+    /**
+     * 공격적인 링크 추출 (아코디언이 펼쳐졌지만 링크를 못 찾은 경우)
+     */
+    private static List<LinkOut> extractLinksAggressively(Page page, String accordionText) {
+        List<LinkOut> links = new ArrayList<>();
+        
+        try {
+            String textEscaped = accordionText.replace("\\", "\\\\").replace("\"", "\\\"");
+            Object result = page.evaluate(String.format("""
+                () => {
+                    const accordionText = "%s";
+                    const links = [];
+                    const baseUrl = window.location.origin;
+                    const currentUrl = window.location.href.split('#')[0];
+                    
+                    // 아코디언 버튼 찾기
+                    let accordionButton = null;
+                    const buttons = document.querySelectorAll('button, [role="button"]');
+                    for (const btn of buttons) {
+                        const btnText = (btn.innerText || btn.textContent || '').trim();
+                        if (btnText === accordionText) {
+                            accordionButton = btn;
+                            break;
+                        }
+                    }
+                    
+                    if (!accordionButton) return links;
+                    
+                    // 아코디언 패널 찾기
+                    let accordionPanel = accordionButton.closest('.MuiAccordion-root');
+                    if (!accordionPanel) {
+                        accordionPanel = accordionButton.parentElement;
+                        while (accordionPanel && !accordionPanel.classList.contains('MuiAccordion-root')) {
+                            accordionPanel = accordionPanel.parentElement;
+                        }
+                    }
+                    
+                    if (!accordionPanel) return links;
+                    
+                    // 모든 가능한 클릭 가능한 요소 찾기
+                    const selectors = [
+                        'a[href]',
+                        '[class*="ListItemButton"]',
+                        '[class*="ListItem-root"]',
+                        '[class*="MenuItem"]',
+                        '[role="link"]',
+                        '[role="menuitem"]',
+                        '[onclick]',
+                        '[data-href]',
+                        '[data-to]',
+                        '[data-path]',
+                        '[data-route]'
+                    ];
+                    
+                    selectors.forEach(selector => {
+                        accordionPanel.querySelectorAll(selector).forEach(el => {
+                            try {
+                                let url = null;
+                                let linkText = '';
+                                
+                                // href 속성
+                                if (el.tagName === 'A' && el.href) {
+                                    url = el.href;
+                                    linkText = (el.innerText || el.textContent || '').trim();
+                                }
+                                // data 속성
+                                else if (el.getAttribute('data-href')) {
+                                    url = el.getAttribute('data-href');
+                                    linkText = (el.innerText || el.textContent || '').trim();
+                                }
+                                else if (el.getAttribute('data-to')) {
+                                    url = el.getAttribute('data-to');
+                                    linkText = (el.innerText || el.textContent || '').trim();
+                                }
+                                else if (el.getAttribute('data-path')) {
+                                    url = new URL(el.getAttribute('data-path'), baseUrl).href;
+                                    linkText = (el.innerText || el.textContent || '').trim();
+                                }
+                                // onClick 핸들러가 있는 경우 (React Router 등)
+                                else if (el.onclick || el.getAttribute('onclick')) {
+                                    // onClick 핸들러는 분석하기 어려우므로, 부모 요소에서 href 찾기
+                                    let parent = el.parentElement;
+                                    while (parent && parent !== accordionPanel) {
+                                        if (parent.tagName === 'A' && parent.href) {
+                                            url = parent.href;
+                                            linkText = (el.innerText || el.textContent || '').trim();
+                                            break;
+                                        }
+                                        parent = parent.parentElement;
+                                    }
+                                }
+                                
+                                if (url && typeof url === 'string' && 
+                                    !url.startsWith('javascript:') && 
+                                    !url.startsWith('#') && 
+                                    url !== '' &&
+                                    url !== currentUrl &&
+                                    (url.startsWith('http://') || url.startsWith('https://'))) {
+                                    url = url.split('#')[0];
+                                    links.push({
+                                        url: url,
+                                        text: linkText || url
+                                    });
+                                }
+                            } catch (e) {}
+                        });
+                    });
+                    
+                    // 중복 제거
+                    const uniqueLinks = [];
+                    const seenUrls = new Set();
+                    links.forEach(link => {
+                        if (!seenUrls.has(link.url)) {
+                            seenUrls.add(link.url);
+                            uniqueLinks.push(link);
+                        }
+                    });
+                    
+                    return uniqueLinks;
+                }
+            """, textEscaped));
+            
+            if (result instanceof List<?>) {
+                for (Object linkObj : (List<?>) result) {
+                    if (linkObj instanceof Map<?, ?>) {
+                        Map<?, ?> linkMap = (Map<?, ?>) linkObj;
+                        Object urlObj = linkMap.get("url");
+                        Object textObj = linkMap.get("text");
+                        if (urlObj instanceof String) {
+                            String url = (String) urlObj;
+                            String linkText = textObj instanceof String ? (String) textObj : url;
+                            links.add(new LinkOut(url, linkText));
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.out.printf("[Crawl] Browser: Error in aggressive link extraction for '%s': %s%n", 
                     accordionText, e.getMessage());
         }
         
