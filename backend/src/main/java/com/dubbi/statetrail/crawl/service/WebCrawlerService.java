@@ -254,6 +254,26 @@ public class WebCrawlerService {
                 CrawlPageEntity current = pageByUrl.computeIfAbsent(url, u -> getOrCreatePage(runId, u, depth));
 
                 try {
+                    // 브라우저 모드인 경우, 현재 페이지가 목표 URL과 다르면 navigate
+                    if (browserMode && page != null) {
+                        String currentPageUrl = page.url();
+                        // URL이 정확히 일치하지 않으면 navigate
+                        if (!currentPageUrl.equals(url) && !currentPageUrl.equals(url + "/") && !(currentPageUrl + "/").equals(url)) {
+                            System.out.printf("[Crawl] Browser: Navigating from %s to %s%n", currentPageUrl, url);
+                            page.navigate(url, new Page.NavigateOptions().setTimeout(15_000));
+                            page.waitForLoadState(LoadState.DOMCONTENTLOADED);
+                            page.waitForTimeout(3000);
+                            try {
+                                page.waitForLoadState(LoadState.NETWORKIDLE, new Page.WaitForLoadStateOptions().setTimeout(5_000));
+                            } catch (Exception e) {
+                                // 타임아웃되어도 계속
+                            }
+                            page.waitForTimeout(1000);
+                        } else {
+                            System.out.printf("[Crawl] Browser: Already on %s, using current page%n", url);
+                        }
+                    }
+                    
                     PageFetchResult result = browserMode
                             ? fetchWithBrowser(page, url)
                             : fetchWithJsoup(url);
