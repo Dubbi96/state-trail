@@ -850,22 +850,60 @@ public class WebCrawlerService {
             }
             
             try {
-                // 요소 찾기 및 클릭
+                // 텍스트로 정확한 요소 찾기 및 클릭
                 try {
-                    var locator = page.locator(selector);
-                    int count = locator.count();
-                    System.out.printf("[Crawl] Browser: Found %d elements with selector '%s' for button '%s'%n", 
-                            count, selector, text);
-                    if (count == 0) {
-                        System.out.printf("[Crawl] Browser: No elements found with selector '%s', skipping%n", selector);
-                        continue;
+                    // JavaScript로 텍스트가 정확히 일치하는 요소 찾기
+                    Object clicked = page.evaluate("""
+                        (text) => {
+                            const buttons = document.querySelectorAll('button, [role="button"]');
+                            for (const btn of buttons) {
+                                const btnText = (btn.innerText || btn.textContent || '').trim();
+                                if (btnText === text) {
+                                    btn.click();
+                                    return true;
+                                }
+                            }
+                            return false;
+                        }
+                    """, text);
+                    
+                    if (clicked instanceof Boolean && (Boolean) clicked) {
+                        System.out.printf("[Crawl] Browser: Clicked button '%s' by text match%n", text);
+                    } else {
+                        System.out.printf("[Crawl] Browser: Button with text '%s' not found, trying selector '%s'%n", text, selector);
+                        // 텍스트 매칭 실패 시 selector로 시도
+                        var locator = page.locator(selector);
+                        int count = locator.count();
+                        if (count > 0) {
+                            // selector로 찾은 요소들 중에서 텍스트가 일치하는 것 찾기
+                            Object clickedBySelector = page.evaluate("""
+                                (selector, text) => {
+                                    const elements = document.querySelectorAll(selector);
+                                    for (const el of elements) {
+                                        const elText = (el.innerText || el.textContent || '').trim();
+                                        if (elText === text) {
+                                            el.click();
+                                            return true;
+                                        }
+                                    }
+                                    return false;
+                                }
+                            """, selector, text);
+                            
+                            if (clickedBySelector instanceof Boolean && (Boolean) clickedBySelector) {
+                                System.out.printf("[Crawl] Browser: Clicked button '%s' by selector and text match%n", text);
+                            } else {
+                                System.out.printf("[Crawl] Browser: Failed to find button '%s' by text in selector matches, skipping%n", text);
+                                continue;
+                            }
+                        } else {
+                            System.out.printf("[Crawl] Browser: No elements found with selector '%s', skipping%n", selector);
+                            continue;
+                        }
                     }
-                    locator.first().click();
-                    System.out.printf("[Crawl] Browser: Clicked button '%s' with selector '%s'%n", text, selector);
                 } catch (Exception e) {
                     // 요소를 찾을 수 없거나 클릭할 수 없는 경우
-                    System.out.printf("[Crawl] Browser: Failed to click button '%s' with selector '%s': %s%n", 
-                            text, selector, e.getMessage());
+                    System.out.printf("[Crawl] Browser: Failed to click button '%s': %s%n", text, e.getMessage());
                     e.printStackTrace();
                     continue;
                 }
@@ -895,12 +933,15 @@ public class WebCrawlerService {
                     }
                 }
                 
-                // DOM에서 새로 나타난 링크 추출
+                // DOM에서 새로 나타난 링크 추출 (아코디언 펼쳐진 후 나타나는 링크들)
                 try {
                     Object newLinks = page.evaluate("""
                         () => {
-                            const links = new Set();
+                            const links = [];
                             const baseUrl = window.location.origin;
+                            const currentUrl = window.location.href.split('#')[0];
+                            
+                            // 모든 <a href> 링크 찾기
                             document.querySelectorAll('a[href]').forEach(a => {
                                 try {
                                     const href = a.href || a.getAttribute('href');
@@ -908,27 +949,79 @@ public class WebCrawlerService {
                                         !href.startsWith('javascript:') && 
                                         !href.startsWith('#') && 
                                         href !== '') {
-                                        const url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
-                                        links.add(url.split('#')[0]); // fragment 제거
+                                        let url;
+                                        try {
+                                            url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
+                                            url = url.split('#')[0]; // fragment 제거
+                                        } catch (e) {
+                                            return;
+                                        }
+                                        
+                                        if (url !== currentUrl && (url.startsWith('http://') || url.startsWith('https://'))) {
+                                            const linkText = (a.innerText || a.textContent || '').trim().slice(0, 100);
+                                            links.push({
+                                                url: url,
+                                                text: linkText || url
+                                            });
+                                        }
                                     }
                                 } catch (e) {}
                             });
-                            return Array.from(links);
+                            
+                            // ListItemButton 내부의 링크도 찾기 (MUI 패턴)
+                            document.querySelectorAll('[class*="MuiListItemButton"], [class*="MuiListItem-root"]').forEach(item => {
+                                try {
+                                    // 부모 체인에서 <a> 태그 찾기
+                                    let target = item;
+                                    while (target && target !== document.body) {
+                                        if (target.tagName === 'A') {
+                                            const href = target.href || target.getAttribute('href');
+                                            if (href && typeof href === 'string' && 
+                                                !href.startsWith('javascript:') && 
+                                                !href.startsWith('#') && 
+                                                href !== '') {
+                                                try {
+                                                    let url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
+                                                    url = url.split('#')[0];
+                                                    if (url !== currentUrl && (url.startsWith('http://') || url.startsWith('https://'))) {
+                                                        const linkText = (target.innerText || target.textContent || item.innerText || item.textContent || '').trim().slice(0, 100);
+                                                        links.push({
+                                                            url: url,
+                                                            text: linkText || url
+                                                        });
+                                                    }
+                                                } catch (e) {}
+                                            }
+                                            break;
+                                        }
+                                        target = target.parentElement;
+                                    }
+                                } catch (e) {}
+                            });
+                            
+                            return links;
                         }
                     """);
                     if (newLinks instanceof List<?>) {
-                        for (Object urlObj : (List<?>) newLinks) {
-                            if (urlObj instanceof String) {
-                                String url = (String) urlObj;
-                                if (!existingLinks.contains(url) && !url.equals(originalUrl.split("#")[0])) {
-                                    links.add(new LinkOut(url, text + " (submenu)"));
-                                    System.out.printf("[Crawl] Browser: Discovered link after clicking '%s': %s (new DOM element)%n", text, url);
+                        for (Object linkObj : (List<?>) newLinks) {
+                            if (linkObj instanceof Map<?, ?>) {
+                                Map<?, ?> linkMap = (Map<?, ?>) linkObj;
+                                Object urlObj = linkMap.get("url");
+                                Object textObj = linkMap.get("text");
+                                if (urlObj instanceof String) {
+                                    String url = (String) urlObj;
+                                    String linkText = textObj instanceof String ? (String) textObj : url;
+                                    if (!existingLinks.contains(url) && !url.equals(originalUrl.split("#")[0])) {
+                                        links.add(new LinkOut(url, linkText));
+                                        System.out.printf("[Crawl] Browser: Discovered link after clicking '%s': %s (text: '%s')%n", text, url, linkText);
+                                    }
                                 }
                             }
                         }
                     }
                 } catch (Exception e) {
-                    // 무시
+                    System.out.printf("[Crawl] Browser: Error extracting links after clicking '%s': %s%n", text, e.getMessage());
+                    e.printStackTrace();
                 }
                 
                 // 원래 페이지로 돌아가기 (URL이 변경된 경우)
