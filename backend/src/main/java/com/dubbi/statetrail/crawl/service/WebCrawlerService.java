@@ -1210,6 +1210,137 @@ public class WebCrawlerService {
     }
     
     /**
+     * 아코디언 내부의 항목을 클릭하여 링크 발견
+     */
+    private static List<LinkOut> clickItemsInAccordionAndExtractLinks(Page page, String accordionText) {
+        List<LinkOut> links = new ArrayList<>();
+        
+        try {
+            String textEscaped = accordionText.replace("\\", "\\\\").replace("\"", "\\\"");
+            String currentUrl = page.url();
+            
+            // 아코디언 내부의 클릭 가능한 항목들을 찾아서 클릭하고 URL 변화 확인
+            Object result = page.evaluate(String.format("""
+                () => {
+                    const accordionText = "%s";
+                    const items = [];
+                    const baseUrl = window.location.origin;
+                    const currentUrl = window.location.href.split('#')[0];
+                    
+                    // 아코디언 버튼 찾기
+                    let accordionButton = null;
+                    const buttons = document.querySelectorAll('button, [role="button"]');
+                    for (const btn of buttons) {
+                        const btnText = (btn.innerText || btn.textContent || '').trim();
+                        if (btnText === accordionText) {
+                            accordionButton = btn;
+                            break;
+                        }
+                    }
+                    
+                    if (!accordionButton) return items;
+                    
+                    // 아코디언 패널 찾기
+                    let accordionPanel = accordionButton.closest('.MuiAccordion-root');
+                    if (!accordionPanel) {
+                        accordionPanel = accordionButton.parentElement;
+                        while (accordionPanel && !accordionPanel.classList.contains('MuiAccordion-root')) {
+                            accordionPanel = accordionPanel.parentElement;
+                        }
+                    }
+                    
+                    if (!accordionPanel) return items;
+                    
+                    // 패널 내부의 모든 클릭 가능한 항목 찾기
+                    const clickableSelectors = [
+                        '[class*="ListItemButton"]',
+                        '[class*="ListItem-root"]',
+                        '[class*="MenuItem"]',
+                        '[role="menuitem"]',
+                        'a[href]'
+                    ];
+                    
+                    clickableSelectors.forEach(selector => {
+                        accordionPanel.querySelectorAll(selector).forEach(el => {
+                            // 요소가 실제로 보이는지 확인
+                            if (el.offsetParent === null && el.style.display === 'none') {
+                                return;
+                            }
+                            
+                            const text = (el.innerText || el.textContent || '').trim();
+                            if (text && text.length > 0 && text !== accordionText) {
+                                items.push({
+                                    text: text,
+                                    selector: selector,
+                                    tagName: el.tagName,
+                                    hasHref: el.href ? el.href : null,
+                                    hasDataTo: el.getAttribute('data-to'),
+                                    hasDataHref: el.getAttribute('data-href')
+                                });
+                            }
+                        });
+                    });
+                    
+                    return items;
+                }
+            """, textEscaped));
+            
+            // 찾은 항목들을 실제로 클릭해보고 URL 변화 확인
+            if (result instanceof List<?>) {
+                int maxClicks = Math.min(5, ((List<?>) result).size()); // 최대 5개만 클릭
+                for (int i = 0; i < maxClicks; i++) {
+                    Object itemObj = ((List<?>) result).get(i);
+                    if (itemObj instanceof Map<?, ?>) {
+                        Map<?, ?> item = (Map<?, ?>) itemObj;
+                        Object textObj = item.get("text");
+                        if (textObj instanceof String) {
+                            String itemText = (String) textObj;
+                            
+                            try {
+                                // 항목 클릭 시도
+                                Locator itemLocator = page.getByText(itemText, new Page.GetByTextOptions().setExact(true));
+                                if (itemLocator.isVisible(new Locator.IsVisibleOptions().setTimeout(1000))) {
+                                    String beforeClickUrl = page.url();
+                                    itemLocator.click(new Locator.ClickOptions().setTimeout(3000));
+                                    
+                                    // URL 변화 대기
+                                    page.waitForTimeout(1000);
+                                    try {
+                                        page.waitForLoadState(LoadState.NETWORKIDLE, new Page.WaitForLoadStateOptions().setTimeout(2000));
+                                    } catch (Exception e) {
+                                        // 타임아웃되어도 계속
+                                    }
+                                    
+                                    String afterClickUrl = page.url();
+                                    
+                                    // URL이 변경되었으면 링크로 추가
+                                    if (!afterClickUrl.equals(beforeClickUrl)) {
+                                        links.add(new LinkOut(afterClickUrl, itemText));
+                                        System.out.printf("[Crawl] Browser: Clicked item '%s' in accordion, navigated to: %s%n", itemText, afterClickUrl);
+                                        
+                                        // 뒤로 가기 (원래 상태로 복귀)
+                                        page.goBack(new Page.GoBackOptions().setTimeout(3000));
+                                        page.waitForLoadState(LoadState.DOMCONTENTLOADED);
+                                        page.waitForTimeout(500);
+                                    }
+                                }
+                            } catch (Exception e) {
+                                // 클릭 실패해도 계속
+                                System.out.printf("[Crawl] Browser: Failed to click item '%s' in accordion: %s%n", itemText, e.getMessage());
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.out.printf("[Crawl] Browser: Error clicking items in accordion '%s': %s%n", 
+                    accordionText, e.getMessage());
+        }
+        
+        return links;
+    }
+    
+    /**
      * 공격적인 링크 추출 (아코디언이 펼쳐졌지만 링크를 못 찾은 경우)
      */
     private static List<LinkOut> extractLinksAggressively(Page page, String accordionText) {
