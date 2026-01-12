@@ -512,55 +512,103 @@ public class WebCrawlerService {
             () => {
                 const links = new Set();
                 const baseUrl = window.location.origin;
+                const currentUrl = window.location.href;
                 
-                // 1. 일반 <a href> 링크
+                // 디버깅 정보 (백엔드 로그로 전달)
+                const debugInfo = {
+                    currentUrl: currentUrl,
+                    totalATags: document.querySelectorAll('a').length,
+                    totalAHrefTags: document.querySelectorAll('a[href]').length,
+                    bodyHtml: document.body ? document.body.innerHTML.length : 0
+                };
+                
+                // 1. 일반 <a href> 링크 (절대 URL로 변환)
                 document.querySelectorAll('a[href]').forEach(a => {
                     try {
-                        const href = a.href || a.getAttribute('href');
-                        if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {
-                            const url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
-                            links.add(JSON.stringify({
+                        const hrefAttr = a.getAttribute('href');
+                        const href = a.href || hrefAttr; // a.href는 브라우저가 자동으로 절대 URL로 변환
+                        
+                        if (href && typeof href === 'string' && 
+                            !href.startsWith('javascript:') && 
+                            !href.startsWith('#') && 
+                            href !== '' &&
+                            href !== window.location.href) {
+                            
+                            let url;
+                            try {
+                                // 브라우저의 a.href는 이미 절대 URL
+                                url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
+                            } catch (e) {
+                                console.warn('[LinkExtraction] Failed to parse href:', href, e);
+                                return;
+                            }
+                            
+                            // 자기 자신 페이지는 제외
+                            if (url === currentUrl || url === currentUrl.split('#')[0]) {
+                                return;
+                            }
+                            
+                            const text = (a.innerText || a.textContent || '').trim().slice(0, 200);
+                            const linkData = {
                                 href: url,
-                                text: (a.innerText || a.textContent || '').trim().slice(0, 200)
-                            }));
+                                text: text || url
+                            };
+                            links.add(JSON.stringify(linkData));
+                        }
+                    } catch (e) {
+                        console.warn('[LinkExtraction] Error processing <a> tag:', e);
+                    }
+                });
+                
+                // 2. React Router Link 컴포넌트의 실제 <a> 태그 찾기
+                // React Router v6+는 Link를 <a> 태그로 렌더링하므로 이미 1번에서 처리됨
+                // 하지만 명시적으로 확인하기 위해 추가 검사
+                
+                // 3. data-* 속성에서 URL 추출
+                document.querySelectorAll('[data-to], [to], [data-href], [data-path], [data-route], [data-url]').forEach(el => {
+                    try {
+                        const path = el.getAttribute('data-to') || el.getAttribute('to') || 
+                                    el.getAttribute('data-href') || el.getAttribute('data-path') || 
+                                    el.getAttribute('data-route') || el.getAttribute('data-url');
+                        if (path && typeof path === 'string' && path !== '' && !path.startsWith('#')) {
+                            let url;
+                            try {
+                                url = path.startsWith('http') ? path : new URL(path, baseUrl).href;
+                            } catch (e) {
+                                return;
+                            }
+                            if (url !== currentUrl) {
+                                const text = (el.innerText || el.textContent || '').trim().slice(0, 200);
+                                links.add(JSON.stringify({
+                                    href: url,
+                                    text: text || url
+                                }));
+                            }
                         }
                     } catch (e) {}
                 });
                 
-                // 2. React Router Link 컴포넌트 (to 속성)
-                document.querySelectorAll('[data-to], [to]').forEach(el => {
+                // 4. 버튼이나 클릭 가능한 요소에서 href 속성 찾기 (이미 <a>가 아닌 경우)
+                document.querySelectorAll('button[href], [role="button"][href], [role="link"][href]').forEach(el => {
                     try {
-                        const to = el.getAttribute('data-to') || el.getAttribute('to');
-                        if (to && !to.startsWith('#')) {
-                            const url = to.startsWith('http') ? to : new URL(to, baseUrl).href;
-                            links.add(JSON.stringify({
-                                href: url,
-                                text: (el.innerText || el.textContent || '').trim().slice(0, 200)
-                            }));
-                        }
-                    } catch (e) {}
-                });
-                
-                // 3. onClick 핸들러가 있는 버튼/요소 (React Router navigate 등)
-                document.querySelectorAll('button, [role="button"], [role="link"], [onclick]').forEach(el => {
-                    try {
-                        // href 속성이 있는 경우 (button이나 a가 아닌 요소)
                         const href = el.getAttribute('href');
-                        if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {
-                            const url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
-                            links.add(JSON.stringify({
-                                href: url,
-                                text: (el.innerText || el.textContent || '').trim().slice(0, 200)
-                            }));
-                        }
-                        // data-href, data-url 등의 속성
-                        const dataHref = el.getAttribute('data-href') || el.getAttribute('data-url');
-                        if (dataHref && !dataHref.startsWith('javascript:') && !dataHref.startsWith('#')) {
-                            const url = dataHref.startsWith('http') ? dataHref : new URL(dataHref, baseUrl).href;
-                            links.add(JSON.stringify({
-                                href: url,
-                                text: (el.innerText || el.textContent || '').trim().slice(0, 200)
-                            }));
+                        if (href && typeof href === 'string' && 
+                            !href.startsWith('javascript:') && 
+                            !href.startsWith('#') && 
+                            href !== '') {
+                            let url;
+                            try {
+                                url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
+                            } catch (e) {
+                                return;
+                            }
+                            if (url !== currentUrl) {
+                                const text = (el.innerText || el.textContent || '').trim().slice(0, 200);
+                                links.add(JSON.stringify({
+                                    href: url,
+                                    text: text || url
+                                }));
+                            }
                         }
                     } catch (e) {}
                 });
@@ -577,32 +625,57 @@ public class WebCrawlerService {
                     // 따라서 실제로 <a href>를 찾는 것이 가장 안전함
                 } catch (e) {}
                 
-                // 5. MUI 및 Material-UI 컴포넌트에서 실제 href나 data 속성만 추출
-                // 텍스트 기반 추측은 제거 - 실제 DOM 속성만 사용
-                document.querySelectorAll('[class*="MuiListItemButton"], [class*="MuiListItem-root"], [class*="MuiAccordionSummary"]').forEach(el => {
+                // 5. MUI 및 Material-UI 컴포넌트에서 실제 <a> 태그 찾기
+                // MUI ListItemButton은 보통 React Router Link로 감싸져 있어서 <a> 태그로 렌더링됨
+                // 이미 1번에서 처리되지만, 명시적으로 확인
+                document.querySelectorAll('[class*="MuiListItemButton"] a[href], [class*="MuiListItem-root"] a[href], [class*="MuiAccordionSummary"] a[href]').forEach(a => {
                     try {
-                        const text = (el.innerText || el.textContent || '').trim();
-                        // 가장 가까운 부모 또는 자신에서 실제 href 속성 찾기
-                        let target = el;
-                        for (let i = 0; i < 5 && target; i++) {
-                            const href = target.getAttribute('href');
-                            if (href && !href.startsWith('javascript:') && !href.startsWith('#') && href !== '') {
-                                // 실제 href가 있는 경우만 추가
-                                const url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
-                                links.add(JSON.stringify({
-                                    href: url,
-                                    text: text.slice(0, 200)
-                                }));
-                                break;
+                        const href = a.href || a.getAttribute('href');
+                        if (href && typeof href === 'string' && 
+                            !href.startsWith('javascript:') && 
+                            !href.startsWith('#') && 
+                            href !== '' &&
+                            href !== currentUrl) {
+                            let url;
+                            try {
+                                url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
+                            } catch (e) {
+                                return;
                             }
-                            // data 속성 확인 (data-href, data-path 등)
-                            const dataHref = target.getAttribute('data-href') || target.getAttribute('data-path');
-                            if (dataHref && !dataHref.startsWith('javascript:') && !dataHref.startsWith('#') && dataHref !== '') {
-                                const url = dataHref.startsWith('http') ? dataHref : new URL(dataHref, baseUrl).href;
-                                links.add(JSON.stringify({
-                                    href: url,
-                                    text: text.slice(0, 200)
-                                }));
+                            const text = (a.innerText || a.textContent || '').trim().slice(0, 200);
+                            links.add(JSON.stringify({
+                                href: url,
+                                text: text || url
+                            }));
+                        }
+                    } catch (e) {}
+                });
+                
+                // 6. 부모 체인에서 <a> 태그 찾기 (MUI 컴포넌트가 <a>로 감싸져 있는 경우)
+                document.querySelectorAll('[class*="MuiListItemButton"], [class*="MuiListItem-root"], [class*="MuiButtonBase-root"]').forEach(el => {
+                    try {
+                        // 자신 또는 부모에서 <a> 태그 찾기
+                        let target = el;
+                        while (target && target !== document.body) {
+                            if (target.tagName === 'A') {
+                                const href = target.href || target.getAttribute('href');
+                                if (href && typeof href === 'string' && 
+                                    !href.startsWith('javascript:') && 
+                                    !href.startsWith('#') && 
+                                    href !== '' &&
+                                    href !== currentUrl) {
+                                    let url;
+                                    try {
+                                        url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
+                                    } catch (e) {
+                                        break;
+                                    }
+                                    const text = (target.innerText || target.textContent || el.innerText || el.textContent || '').trim().slice(0, 200);
+                                    links.add(JSON.stringify({
+                                        href: url,
+                                        text: text || url
+                                    }));
+                                }
                                 break;
                             }
                             target = target.parentElement;
@@ -626,53 +699,38 @@ public class WebCrawlerService {
                     } catch (e) {}
                 });
                 
-                // 9. React Router가 실제로 렌더링한 Link 컴포넌트 찾기
-                // React Router Link는 보통 <a> 태그로 렌더링되므로 이미 1번에서 처리됨
-                // 하지만 추가로 확인할 수 있는 방법: 실제 클릭 이벤트 리스너를 가진 요소들
-                // (이건 시간이 오래 걸리므로 실제 DOM 속성만 사용하는 것이 좋음)
-                
-                // 6. 네비게이션 메뉴에서 실제 href 속성만 추출 (추측 없음)
-                document.querySelectorAll('nav a[href], [role="navigation"] a[href], [class*="menu"] a[href], [class*="sidebar"] a[href]').forEach(el => {
-                    try {
-                        const href = el.getAttribute('href');
-                        if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {
-                            const url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
-                            links.add(JSON.stringify({
-                                href: url,
-                                text: (el.innerText || el.textContent || '').trim().slice(0, 200)
-                            }));
-                        }
-                    } catch (e) {}
-                });
-                
-                // 7. 실제 클릭해서 URL 변경을 확인하는 방법 (React Router navigate 감지)
-                // 이 방법은 실제로 요소를 클릭하고 URL 변경을 감지하지만 시간이 오래 걸림
-                // 일단 주석 처리하고, 실제 DOM 속성만 사용
-                /*
-                // 클릭 가능한 요소들을 실제로 클릭해서 URL 변경 확인
-                document.querySelectorAll('[class*="MuiListItemButton"], button[class*="nav"], a').forEach(async el => {
-                    try {
-                        const currentUrl = window.location.href;
-                        el.click();
-                        await new Promise(resolve => setTimeout(resolve, 500));
-                        const newUrl = window.location.href;
-                        if (newUrl !== currentUrl) {
-                            links.add(JSON.stringify({
-                                href: newUrl,
-                                text: (el.innerText || el.textContent || '').trim().slice(0, 200)
-                            }));
-                            window.history.back();
-                            await new Promise(resolve => setTimeout(resolve, 200));
-                        }
-                    } catch (e) {}
-                });
-                */
-                
-                return Array.from(links).map(s => JSON.parse(s));
+                // 디버깅 정보를 반환에 포함
+                const result = {
+                    links: Array.from(links).map(s => JSON.parse(s)),
+                    debug: debugInfo
+                };
+                return result;
             }
         """);
         
-        if (!(raw instanceof List<?> list)) {
+        // 결과가 Map인 경우 (디버깅 정보 포함) links 추출, 아니면 List로 처리
+        List<?> list;
+        Map<?, ?> debugInfo = null;
+        if (raw instanceof Map<?, ?> map) {
+            Object linksObj = map.get("links");
+            Object debugObj = map.get("debug");
+            if (linksObj instanceof List<?>) {
+                list = (List<?>) linksObj;
+                if (debugObj instanceof Map<?, ?>) {
+                    debugInfo = (Map<?, ?>) debugObj;
+                    System.out.printf("[Crawl] Browser: Link extraction debug - currentUrl: %s, totalATags: %s, totalAHrefTags: %s, bodyHtmlLength: %s%n",
+                            debugInfo.get("currentUrl"),
+                            debugInfo.get("totalATags"),
+                            debugInfo.get("totalAHrefTags"),
+                            debugInfo.get("bodyHtml"));
+                }
+            } else {
+                System.out.println("[Crawl] Browser: Evaluation returned unexpected format");
+                return Set.of();
+            }
+        } else if (raw instanceof List<?>) {
+            list = (List<?>) raw;
+        } else {
             System.out.println("[Crawl] Browser: No links found or evaluation failed");
             return Set.of();
         }
