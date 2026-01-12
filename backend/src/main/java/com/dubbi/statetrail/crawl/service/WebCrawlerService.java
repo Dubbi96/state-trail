@@ -419,6 +419,28 @@ public class WebCrawlerService {
     }
 
     private record LinkOut(String href, String anchorText) {}
+    
+    /**
+     * 액션 후보: 클릭 가능한 요소를 나타냄
+     */
+    private record ActionCandidate(
+        String type,           // "click", "input", "submit", "navigate"
+        String text,           // 버튼/링크 텍스트
+        String selector,       // CSS selector
+        String href,           // 링크인 경우 href (null 가능)
+        int priority           // 우선순위: 1=아코디언/메뉴, 2=페이지네이션, 3=일반 버튼
+    ) {}
+    
+    /**
+     * 상태 변화 감지 결과
+     */
+    private record StateChangeResult(
+        boolean changed,              // 상태가 변경되었는지
+        String newUrl,                // 새 URL (변경된 경우)
+        String newDomHash,            // 새 DOM 해시
+        Map<String, Object> newUiSignature,  // 새 UI 시그니처
+        List<LinkOut> discoveredLinks // 새로 발견된 링크들
+    ) {}
     private record FrontierItem(String url, int score, long seq) {}
     private record PageFetchResult(
             Integer status, 
@@ -501,11 +523,270 @@ public class WebCrawlerService {
         // UI 시그니처 추출
         Map<String, Object> uiSignature = UiSignatureExtractor.extractFromPage(page);
 
-        Set<LinkOut> links = extractLinksFromBrowser(page, uiSignature);
+        // 상태/행동 탐색 방식: 액션 후보 추출 및 실행
+        Set<LinkOut> links = extractActionsAndDiscoverLinks(page, uiSignature);
         String snapshot = html == null ? null : (html.length() > 200_000 ? html.substring(0, 200_000) : html);
         return new PageFetchResult(status, contentType, title, snapshot, links, uiSignature, networkRequests);
     }
+    
+    /**
+     * 상태/행동 탐색 방식으로 액션 후보를 추출하고 실행하여 링크 발견
+     */
+    private static Set<LinkOut> extractActionsAndDiscoverLinks(Page page, Map<String, Object> uiSignature) {
+        Set<LinkOut> links = new HashSet<>();
+        
+        // 1. 먼저 일반적인 <a href> 링크 추출
+        Set<LinkOut> staticLinks = extractStaticLinks(page);
+        links.addAll(staticLinks);
+        
+        // 2. 정적 링크가 없거나 적으면, 액션 기반 탐색 수행
+        if (staticLinks.isEmpty()) {
+            System.out.println("[Crawl] Browser: No static links found, switching to action-based exploration");
+            
+            // 액션 후보 추출
+            List<ActionCandidate> actions = extractActionsFromUiSignature(uiSignature);
+            System.out.printf("[Crawl] Browser: Extracted %d action candidates%n", actions.size());
+            
+            // 현재 상태 저장
+            String currentUrl = page.url();
+            String currentDomHash = (String) uiSignature.getOrDefault("domHash", "");
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> currentCTAs = (List<Map<String, Object>>) uiSignature.getOrDefault("ctas", List.of());
+            
+            // 우선순위별로 액션 실행 (아코디언/메뉴 우선)
+            List<ActionCandidate> navigationActions = actions.stream()
+                .filter(a -> a.priority() == 1)
+                .toList();
+            
+            // 1단계: 네비게이션 액션 (아코디언/메뉴) 먼저 실행하여 상태 확장
+            for (ActionCandidate action : navigationActions) {
+                if (links.size() >= 20) break; // 최대 20개까지만
+                
+                StateChangeResult result = tryActionAndDetectStateChange(page, action, currentUrl, currentDomHash);
+                if (result.changed()) {
+                    System.out.printf("[Crawl] Browser: State changed after action '%s': URL=%s, domHash=%s -> %s%n", 
+                            action.text(), currentUrl, currentDomHash, result.newDomHash());
+                    
+                    // 새로 발견된 링크 추가
+                    links.addAll(result.discoveredLinks());
+                    
+                    // 상태가 변경되었으므로, 새로운 UI Signature에서 추가 액션 추출 가능
+                    if (result.newUiSignature() != null) {
+                        @SuppressWarnings("unchecked")
+                        List<Map<String, Object>> newCTAs = (List<Map<String, Object>>) result.newUiSignature().getOrDefault("ctas", List.of());
+                        if (newCTAs.size() > currentCTAs.size()) {
+                            System.out.printf("[Crawl] Browser: New CTAs discovered after action '%s': %d -> %d%n", 
+                                    action.text(), currentCTAs.size(), newCTAs.size());
+                        }
+                    }
+                }
+            }
+            
+            // 2단계: 확장된 상태에서 정적 링크 다시 추출
+            if (!links.isEmpty()) {
+                Set<LinkOut> expandedLinks = extractStaticLinks(page);
+                links.addAll(expandedLinks);
+                System.out.printf("[Crawl] Browser: Discovered %d total links after action-based exploration%n", links.size());
+            }
+        }
+        
+        return links;
+    }
+    
+    /**
+     * UI Signature에서 액션 후보 추출 (우선순위 포함)
+     */
+    private static List<ActionCandidate> extractActionsFromUiSignature(Map<String, Object> uiSignature) {
+        List<ActionCandidate> actions = new ArrayList<>();
+        
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> ctas = (List<Map<String, Object>>) uiSignature.getOrDefault("ctas", List.of());
+        
+        for (Map<String, Object> cta : ctas) {
+            String type = (String) cta.getOrDefault("type", "button");
+            String text = (String) cta.getOrDefault("text", "");
+            String selector = (String) cta.getOrDefault("selector", "");
+            String href = (String) cta.get("href");
+            
+            if (text.isBlank() && selector.isBlank()) continue;
+            
+            // 우선순위 결정
+            int priority = 3; // 기본: 일반 버튼
+            String lowerText = text.toLowerCase();
+            String lowerSelector = selector.toLowerCase();
+            
+            // 아코디언/메뉴 우선순위 1
+            if (lowerSelector.contains("accordion") || 
+                lowerSelector.contains("menuitem") ||
+                lowerText.contains("관리") ||
+                lowerText.contains("menu") ||
+                lowerText.contains("nav")) {
+                priority = 1;
+            }
+            // 페이지네이션 우선순위 2
+            else if (lowerSelector.contains("pagination") ||
+                     lowerText.matches("^\\d+$") || // 숫자만 (페이지 번호)
+                     lowerText.equals("next") ||
+                     lowerText.equals("prev") ||
+                     lowerText.equals("이전") ||
+                     lowerText.equals("다음")) {
+                priority = 2;
+            }
+            
+            String actionType = href != null ? "navigate" : "click";
+            actions.add(new ActionCandidate(actionType, text, selector, href, priority));
+        }
+        
+        // 우선순위별 정렬
+        actions.sort((a, b) -> Integer.compare(a.priority(), b.priority()));
+        
+        return actions;
+    }
+    
+    /**
+     * 액션 실행 후 상태 변화 감지
+     */
+    private static StateChangeResult tryActionAndDetectStateChange(
+            Page page, 
+            ActionCandidate action, 
+            String beforeUrl, 
+            String beforeDomHash) {
+        
+        try {
+            // 액션 실행
+            boolean clicked = false;
+            if ("navigate".equals(action.type()) && action.href() != null) {
+                // 링크인 경우 직접 URL로 이동
+                try {
+                    page.navigate(action.href(), new Page.NavigateOptions().setTimeout(5000));
+                    clicked = true;
+                } catch (Exception e) {
+                    System.out.printf("[Crawl] Browser: Failed to navigate to %s: %s%n", action.href(), e.getMessage());
+                }
+            } else {
+                // 버튼 클릭
+                String textEscaped = action.text().replace("\\", "\\\\").replace("\"", "\\\"");
+                Object result = page.evaluate(String.format("""
+                    () => {
+                        const text = "%s";
+                        const buttons = document.querySelectorAll('button, [role="button"], a');
+                        for (const btn of buttons) {
+                            const btnText = (btn.innerText || btn.textContent || '').trim();
+                            if (btnText === text) {
+                                btn.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+                """, textEscaped));
+                clicked = result instanceof Boolean && (Boolean) result;
+            }
+            
+            if (!clicked) {
+                return new StateChangeResult(false, beforeUrl, beforeDomHash, null, List.of());
+            }
+            
+            // DOM 안정화 대기
+            page.waitForTimeout(500);
+            try {
+                page.waitForLoadState(LoadState.NETWORKIDLE, new Page.WaitForLoadStateOptions().setTimeout(2000));
+            } catch (Exception e) {
+                // 타임아웃되어도 계속
+            }
+            page.waitForTimeout(500);
+            
+            // 상태 변화 확인
+            String afterUrl = page.url();
+            Map<String, Object> newUiSignature = UiSignatureExtractor.extractFromPage(page);
+            String afterDomHash = (String) newUiSignature.getOrDefault("domHash", "");
+            
+            boolean urlChanged = !afterUrl.equals(beforeUrl);
+            boolean domChanged = !afterDomHash.equals(beforeDomHash);
+            
+            // 상태 변화 감지
+            if (urlChanged || domChanged) {
+                // 새로 발견된 링크 추출
+                List<LinkOut> discoveredLinks = extractStaticLinks(page).stream().toList();
+                
+                return new StateChangeResult(true, afterUrl, afterDomHash, newUiSignature, discoveredLinks);
+            }
+            
+            return new StateChangeResult(false, beforeUrl, beforeDomHash, null, List.of());
+            
+        } catch (Exception e) {
+            System.out.printf("[Crawl] Browser: Error executing action '%s': %s%n", action.text(), e.getMessage());
+            return new StateChangeResult(false, beforeUrl, beforeDomHash, null, List.of());
+        }
+    }
+    
+    /**
+     * 정적 링크 추출 (<a href> 태그)
+     */
+    private static Set<LinkOut> extractStaticLinks(Page page) {
+        Set<LinkOut> links = new HashSet<>();
+        
+        try {
+            Object raw = page.evaluate("""
+                () => {
+                    const links = [];
+                    const baseUrl = window.location.origin;
+                    const currentUrl = window.location.href.split('#')[0];
+                    
+                    document.querySelectorAll('a[href]').forEach(a => {
+                        try {
+                            const href = a.href || a.getAttribute('href');
+                            if (href && typeof href === 'string' && 
+                                !href.startsWith('javascript:') && 
+                                !href.startsWith('#') && 
+                                href !== '' &&
+                                href !== currentUrl) {
+                                let url;
+                                try {
+                                    url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
+                                    url = url.split('#')[0];
+                                } catch (e) {
+                                    return;
+                                }
+                                
+                                if (url.startsWith('http://') || url.startsWith('https://')) {
+                                    const text = (a.innerText || a.textContent || '').trim().slice(0, 200);
+                                    links.push({
+                                        href: url,
+                                        text: text || url
+                                    });
+                                }
+                            }
+                        } catch (e) {}
+                    });
+                    
+                    return links;
+                }
+            """);
+            
+            if (raw instanceof List<?>) {
+                for (Object item : (List<?>) raw) {
+                    if (item instanceof Map<?, ?>) {
+                        Map<?, ?> m = (Map<?, ?>) item;
+                        Object hrefObj = m.get("href");
+                        Object textObj = m.get("text");
+                        if (hrefObj instanceof String) {
+                            String href = (String) hrefObj;
+                            String text = textObj instanceof String ? (String) textObj : href;
+                            links.add(new LinkOut(href, text));
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.out.printf("[Crawl] Browser: Error extracting static links: %s%n", e.getMessage());
+        }
+        
+        return links;
+    }
 
+    // Deprecated: extractActionsAndDiscoverLinks로 대체됨
+    @Deprecated
     private static Set<LinkOut> extractLinksFromBrowser(Page page, Map<String, Object> uiSignature) {
         Set<LinkOut> links = new HashSet<>();
         
@@ -785,21 +1066,13 @@ public class WebCrawlerService {
         
         System.out.printf("[Crawl] Browser: Extracted %d links from page (after deduplication)%n", out.size());
         
-        // 일반 링크가 0개이고, UI Signature에 버튼이 있으면 실제 클릭 시도
-        if (out.isEmpty() && uiSignature != null) {
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> ctas = (List<Map<String, Object>>) uiSignature.get("ctas");
-            if (ctas != null && !ctas.isEmpty()) {
-                System.out.printf("[Crawl] Browser: No <a> tags found, attempting to discover links by clicking %d buttons%n", ctas.size());
-                Set<LinkOut> clickedLinks = extractLinksByClicking(page, ctas);
-                out.addAll(clickedLinks);
-                System.out.printf("[Crawl] Browser: Discovered %d additional links by clicking buttons%n", clickedLinks.size());
-            }
-        }
+        // extractActionsAndDiscoverLinks에서 이미 처리됨
         
         return out;
     }
     
+    // Deprecated: extractActionsAndDiscoverLinks로 대체됨
+    @Deprecated
     private static Set<LinkOut> extractLinksByClicking(Page page, List<Map<String, Object>> ctas) {
         Set<LinkOut> links = new HashSet<>();
         String originalUrl = page.url();
