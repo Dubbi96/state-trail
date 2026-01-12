@@ -840,6 +840,7 @@ public class WebCrawlerService {
         // 최대 10개까지만 클릭 (시간 제한)
         int maxClicks = Math.min(ctas.size(), 10);
         
+        // 1단계: 모든 아코디언 버튼 클릭 (URL 변경 없는 경우, 상태 유지)
         for (int i = 0; i < maxClicks; i++) {
             Map<String, Object> cta = ctas.get(i);
             String selector = (String) cta.get("selector");
@@ -851,210 +852,129 @@ public class WebCrawlerService {
             
             try {
                 // 텍스트로 정확한 요소 찾기 및 클릭
-                try {
-                    // JavaScript로 텍스트가 정확히 일치하는 요소 찾기
-                    Object clicked = page.evaluate("""
-                        (text) => {
-                            const buttons = document.querySelectorAll('button, [role="button"]');
-                            for (const btn of buttons) {
-                                const btnText = (btn.innerText || btn.textContent || '').trim();
-                                if (btnText === text) {
-                                    btn.click();
+                Object clicked = page.evaluate("""
+                    (text) => {
+                        const buttons = document.querySelectorAll('button, [role="button"]');
+                        for (const btn of buttons) {
+                            const btnText = (btn.innerText || btn.textContent || '').trim();
+                            if (btnText === text) {
+                                btn.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+                """, text);
+                
+                if (clicked instanceof Boolean && (Boolean) clicked) {
+                    System.out.printf("[Crawl] Browser: Clicked button '%s' by text match%n", text);
+                } else {
+                    // selector로 시도
+                    String selectorEscaped = selector.replace("\\", "\\\\").replace("\"", "\\\"");
+                    String textEscaped = text.replace("\\", "\\\\").replace("\"", "\\\"");
+                    Object clickedBySelector = page.evaluate(String.format("""
+                        () => {
+                            const selector = "%s";
+                            const text = "%s";
+                            const elements = document.querySelectorAll(selector);
+                            for (const el of elements) {
+                                const elText = (el.innerText || el.textContent || '').trim();
+                                if (elText === text) {
+                                    el.click();
                                     return true;
                                 }
                             }
                             return false;
                         }
-                    """, text);
+                    """, selectorEscaped, textEscaped));
                     
-                    if (clicked instanceof Boolean && (Boolean) clicked) {
-                        System.out.printf("[Crawl] Browser: Clicked button '%s' by text match%n", text);
+                    if (clickedBySelector instanceof Boolean && (Boolean) clickedBySelector) {
+                        System.out.printf("[Crawl] Browser: Clicked button '%s' by selector and text match%n", text);
                     } else {
-                        System.out.printf("[Crawl] Browser: Button with text '%s' not found, trying selector '%s'%n", text, selector);
-                        // 텍스트 매칭 실패 시 selector로 시도
-                        var locator = page.locator(selector);
-                        int count = locator.count();
-                        if (count > 0) {
-                            // selector로 찾은 요소들 중에서 텍스트가 일치하는 것 찾기
-                            Object clickedBySelector = page.evaluate("""
-                                (selector, text) => {
-                                    const elements = document.querySelectorAll(selector);
-                                    for (const el of elements) {
-                                        const elText = (el.innerText || el.textContent || '').trim();
-                                        if (elText === text) {
-                                            el.click();
-                                            return true;
-                                        }
-                                    }
-                                    return false;
-                                }
-                            """, selector, text);
-                            
-                            if (clickedBySelector instanceof Boolean && (Boolean) clickedBySelector) {
-                                System.out.printf("[Crawl] Browser: Clicked button '%s' by selector and text match%n", text);
-                            } else {
-                                System.out.printf("[Crawl] Browser: Failed to find button '%s' by text in selector matches, skipping%n", text);
-                                continue;
-                            }
-                        } else {
-                            System.out.printf("[Crawl] Browser: No elements found with selector '%s', skipping%n", selector);
-                            continue;
-                        }
-                    }
-                } catch (Exception e) {
-                    // 요소를 찾을 수 없거나 클릭할 수 없는 경우
-                    System.out.printf("[Crawl] Browser: Failed to click button '%s': %s%n", text, e.getMessage());
-                    e.printStackTrace();
-                    continue;
-                }
-                
-                // DOM 변경 완료 대기
-                page.waitForTimeout(1000);
-                try {
-                    page.waitForLoadState(LoadState.NETWORKIDLE, new Page.WaitForLoadStateOptions().setTimeout(2000));
-                } catch (Exception e) {
-                    // 타임아웃되어도 계속
-                }
-                page.waitForTimeout(500); // 추가 안정화 시간
-                
-                // URL 변경 확인
-                String afterUrl = page.url();
-                if (!afterUrl.equals(originalUrl)) {
-                    try {
-                        java.net.URI uri = java.net.URI.create(afterUrl);
-                        String cleanUrl = new java.net.URI(uri.getScheme(), uri.getUserInfo(), uri.getHost(), uri.getPort(), 
-                                uri.getPath(), uri.getQuery(), null).toString();
-                        if (cleanUrl.startsWith("http://") || cleanUrl.startsWith("https://")) {
-                            links.add(new LinkOut(cleanUrl, text));
-                            System.out.printf("[Crawl] Browser: Discovered link by clicking '%s': %s (URL changed)%n", text, cleanUrl);
-                        }
-                    } catch (Exception e) {
-                        // URL 파싱 실패
+                        System.out.printf("[Crawl] Browser: Failed to click button '%s', skipping%n", text);
+                        continue;
                     }
                 }
                 
-                // DOM에서 새로 나타난 링크 추출 (아코디언 펼쳐진 후 나타나는 링크들)
-                try {
-                    Object newLinks = page.evaluate("""
-                        () => {
-                            const links = [];
-                            const baseUrl = window.location.origin;
-                            const currentUrl = window.location.href.split('#')[0];
-                            
-                            // 모든 <a href> 링크 찾기
-                            document.querySelectorAll('a[href]').forEach(a => {
-                                try {
-                                    const href = a.href || a.getAttribute('href');
-                                    if (href && typeof href === 'string' && 
-                                        !href.startsWith('javascript:') && 
-                                        !href.startsWith('#') && 
-                                        href !== '') {
-                                        let url;
-                                        try {
-                                            url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
-                                            url = url.split('#')[0]; // fragment 제거
-                                        } catch (e) {
-                                            return;
-                                        }
-                                        
-                                        if (url !== currentUrl && (url.startsWith('http://') || url.startsWith('https://'))) {
-                                            const linkText = (a.innerText || a.textContent || '').trim().slice(0, 100);
-                                            links.push({
-                                                url: url,
-                                                text: linkText || url
-                                            });
-                                        }
-                                    }
-                                } catch (e) {}
-                            });
-                            
-                            // ListItemButton 내부의 링크도 찾기 (MUI 패턴)
-                            document.querySelectorAll('[class*="MuiListItemButton"], [class*="MuiListItem-root"]').forEach(item => {
-                                try {
-                                    // 부모 체인에서 <a> 태그 찾기
-                                    let target = item;
-                                    while (target && target !== document.body) {
-                                        if (target.tagName === 'A') {
-                                            const href = target.href || target.getAttribute('href');
-                                            if (href && typeof href === 'string' && 
-                                                !href.startsWith('javascript:') && 
-                                                !href.startsWith('#') && 
-                                                href !== '') {
-                                                try {
-                                                    let url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
-                                                    url = url.split('#')[0];
-                                                    if (url !== currentUrl && (url.startsWith('http://') || url.startsWith('https://'))) {
-                                                        const linkText = (target.innerText || target.textContent || item.innerText || item.textContent || '').trim().slice(0, 100);
-                                                        links.push({
-                                                            url: url,
-                                                            text: linkText || url
-                                                        });
-                                                    }
-                                                } catch (e) {}
-                                            }
-                                            break;
-                                        }
-                                        target = target.parentElement;
-                                    }
-                                } catch (e) {}
-                            });
-                            
-                            return links;
-                        }
-                    """);
-                    if (newLinks instanceof List<?>) {
-                        for (Object linkObj : (List<?>) newLinks) {
-                            if (linkObj instanceof Map<?, ?>) {
-                                Map<?, ?> linkMap = (Map<?, ?>) linkObj;
-                                Object urlObj = linkMap.get("url");
-                                Object textObj = linkMap.get("text");
-                                if (urlObj instanceof String) {
-                                    String url = (String) urlObj;
-                                    String linkText = textObj instanceof String ? (String) textObj : url;
-                                    if (!existingLinks.contains(url) && !url.equals(originalUrl.split("#")[0])) {
-                                        links.add(new LinkOut(url, linkText));
-                                        System.out.printf("[Crawl] Browser: Discovered link after clicking '%s': %s (text: '%s')%n", text, url, linkText);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                    System.out.printf("[Crawl] Browser: Error extracting links after clicking '%s': %s%n", text, e.getMessage());
-                    e.printStackTrace();
-                }
-                
-                // 원래 페이지로 돌아가기 (URL이 변경된 경우)
-                if (!afterUrl.equals(originalUrl)) {
-                    try {
-                        page.goBack(new Page.GoBackOptions().setTimeout(3000));
-                        page.waitForLoadState(LoadState.DOMCONTENTLOADED);
-                        page.waitForTimeout(1000);
-                    } catch (Exception e) {
-                        // 뒤로 가기 실패 시 원래 URL로 직접 이동
-                        try {
-                            page.navigate(originalUrl, new Page.NavigateOptions().setTimeout(5000));
-                            page.waitForLoadState(LoadState.DOMCONTENTLOADED);
-                            page.waitForTimeout(1000);
-                        } catch (Exception e2) {
-                            // 복구 실패 시 중단
-                            System.out.printf("[Crawl] Browser: Failed to return to original URL, stopping click-based discovery%n");
-                            break;
-                        }
-                    }
-                }
+                // DOM 변경 완료 대기 (짧게)
+                page.waitForTimeout(300);
             } catch (Exception e) {
-                System.out.printf("[Crawl] Browser: Error while clicking button '%s': %s%n", text, e.getMessage());
-                // 에러 발생 시 원래 URL로 복구 시도
-                try {
-                    page.navigate(originalUrl, new Page.NavigateOptions().setTimeout(5000));
-                    page.waitForLoadState(LoadState.DOMCONTENTLOADED);
-                    page.waitForTimeout(500);
-                } catch (Exception e2) {
-                    // 복구 실패 시 중단
-                    break;
+                System.out.printf("[Crawl] Browser: Error clicking button '%s': %s%n", text, e.getMessage());
+                // 계속 진행
+            }
+        }
+        
+        // 모든 버튼 클릭 완료 후 최종 대기
+        page.waitForTimeout(1000);
+        try {
+            page.waitForLoadState(LoadState.NETWORKIDLE, new Page.WaitForLoadStateOptions().setTimeout(2000));
+        } catch (Exception e) {
+            // 타임아웃되어도 계속
+        }
+        
+        // 2단계: 아코디언이 모두 펼쳐진 상태에서 링크 추출
+        try {
+            Object allLinks = page.evaluate("""
+                () => {
+                    const links = [];
+                    const baseUrl = window.location.origin;
+                    const currentUrl = window.location.href.split('#')[0];
+                    const foundUrls = new Set();
+                    
+                    // 모든 <a href> 링크 찾기
+                    document.querySelectorAll('a[href]').forEach(a => {
+                        try {
+                            const href = a.href || a.getAttribute('href');
+                            if (href && typeof href === 'string' && 
+                                !href.startsWith('javascript:') && 
+                                !href.startsWith('#') && 
+                                href !== '') {
+                                let url;
+                                try {
+                                    url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
+                                    url = url.split('#')[0]; // fragment 제거
+                                } catch (e) {
+                                    return;
+                                }
+                                
+                                if (url !== currentUrl && 
+                                    (url.startsWith('http://') || url.startsWith('https://')) &&
+                                    !foundUrls.has(url)) {
+                                    foundUrls.add(url);
+                                    const linkText = (a.innerText || a.textContent || '').trim().slice(0, 100);
+                                    links.push({
+                                        url: url,
+                                        text: linkText || url
+                                    });
+                                }
+                            }
+                        } catch (e) {}
+                    });
+                    
+                    return links;
+                }
+            """);
+            
+            if (allLinks instanceof List<?>) {
+                for (Object linkObj : (List<?>) allLinks) {
+                    if (linkObj instanceof Map<?, ?>) {
+                        Map<?, ?> linkMap = (Map<?, ?>) linkObj;
+                        Object urlObj = linkMap.get("url");
+                        Object textObj = linkMap.get("text");
+                        if (urlObj instanceof String) {
+                            String url = (String) urlObj;
+                            String linkText = textObj instanceof String ? (String) textObj : url;
+                            if (!existingLinks.contains(url) && !url.equals(originalUrl.split("#")[0])) {
+                                links.add(new LinkOut(url, linkText));
+                                System.out.printf("[Crawl] Browser: Discovered link from expanded accordion: %s (text: '%s')%n", url, linkText);
+                            }
+                        }
+                    }
                 }
             }
+        } catch (Exception e) {
+            System.out.printf("[Crawl] Browser: Error extracting links from expanded accordions: %s%n", e.getMessage());
+            e.printStackTrace();
         }
         
         return links;
