@@ -1013,14 +1013,15 @@ public class WebCrawlerService {
                 System.out.printf("[Crawl] Browser: Found %d static links in changed state%n", discoveredLinks.size());
                 
                 // 아코디언이 펼쳐진 경우, 펼쳐진 영역에서 추가 링크 찾기 (항상 실행)
-                if (accordionIsExpanded || newLinksCount > 0) {
+                if (accordionIsExpanded) {
+                    System.out.printf("[Crawl] Browser: Accordion '%s' is expanded, extracting links from it...%n", action.text());
                     List<LinkOut> accordionLinks = extractLinksFromExpandedAccordion(page, action.text());
                     discoveredLinks = new ArrayList<>(discoveredLinks);
                     discoveredLinks.addAll(accordionLinks);
                     System.out.printf("[Crawl] Browser: Found %d additional links from expanded accordion%n", accordionLinks.size());
                     
                     // 아코디언이 펼쳐졌지만 링크를 못 찾은 경우, 더 공격적으로 찾기
-                    if (accordionLinks.isEmpty() && newLinksCount > 0) {
+                    if (accordionLinks.isEmpty()) {
                         System.out.printf("[Crawl] Browser: Accordion expanded but no links found, trying aggressive extraction...%n");
                         List<LinkOut> aggressiveLinks = extractLinksAggressively(page, action.text());
                         discoveredLinks.addAll(aggressiveLinks);
@@ -1028,7 +1029,8 @@ public class WebCrawlerService {
                     }
                     
                     // 아코디언 내부의 클릭 가능한 요소를 직접 클릭하여 페이지로 이동
-                    if (accordionLinks.isEmpty() && newLinksCount > 0) {
+                    // 중요: 아코디언이 펼쳐져 있으면 무조건 내부 항목들을 클릭해봐야 함
+                    if (accordionLinks.isEmpty()) {
                         System.out.printf("[Crawl] Browser: Trying to click items inside accordion '%s' to discover links...%n", action.text());
                         List<LinkOut> clickedLinks = clickItemsInAccordionAndExtractLinks(page, action.text());
                         discoveredLinks.addAll(clickedLinks);
@@ -1286,7 +1288,9 @@ public class WebCrawlerService {
             
             // 찾은 항목들을 실제로 클릭해보고 URL 변화 확인
             if (result instanceof List<?>) {
-                int maxClicks = Math.min(5, ((List<?>) result).size()); // 최대 5개만 클릭
+                int itemCount = ((List<?>) result).size();
+                System.out.printf("[Crawl] Browser: Found %d clickable items in accordion '%s'%n", itemCount, accordionText);
+                int maxClicks = Math.min(10, itemCount); // 최대 10개까지 클릭 (더 많이 시도)
                 for (int i = 0; i < maxClicks; i++) {
                     Object itemObj = ((List<?>) result).get(i);
                     if (itemObj instanceof Map<?, ?>) {
@@ -1339,6 +1343,7 @@ public class WebCrawlerService {
                                         const searchContainer = accordionDetails || accordionPanel;
                                         
                                         // Stack 요소들을 찾기 (React Router navigate 사용)
+                                        // Lnb.tsx 구조: Stack > Typography (텍스트) > onClick={navigate(path)}
                                         const stackElements = searchContainer.querySelectorAll('[class*="MuiStack-root"]');
                                         for (const stack of stackElements) {
                                             // Stack 내부의 Typography에서 텍스트 확인
@@ -1350,7 +1355,8 @@ public class WebCrawlerService {
                                                 stackText = (stack.innerText || stack.textContent || '').trim();
                                             }
                                             
-                                            if (stackText === itemText) {
+                                            // 텍스트가 정확히 일치하거나 포함되어 있으면
+                                            if (stackText === itemText || stackText.includes(itemText) || itemText.includes(stackText)) {
                                                 // 클릭 가능한 요소인지 확인 (cursor: pointer)
                                                 const style = window.getComputedStyle(stack);
                                                 const isClickable = style.cursor === 'pointer' || 
@@ -1358,15 +1364,28 @@ public class WebCrawlerService {
                                                                    stack.getAttribute('onclick') !== null ||
                                                                    stack.style.cursor === 'pointer';
                                                 
-                                                if (isClickable && stack.offsetParent !== null) {
+                                                // Stack이 보이고 클릭 가능하면
+                                                if ((isClickable || stackText) && stack.offsetParent !== null) {
                                                     // 클릭 실행
                                                     stack.scrollIntoView({ behavior: 'smooth', block: 'center' });
                                                     stack.focus();
+                                                    
+                                                    // React Router의 navigate를 트리거하기 위해 실제 클릭 이벤트 발생
                                                     stack.click();
                                                     
-                                                    // 추가로 이벤트 트리거
-                                                    const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+                                                    // 추가로 이벤트 트리거 (React Router가 이벤트를 듣고 있을 수 있음)
+                                                    const clickEvent = new MouseEvent('click', { 
+                                                        bubbles: true, 
+                                                        cancelable: true,
+                                                        view: window
+                                                    });
                                                     stack.dispatchEvent(clickEvent);
+                                                    
+                                                    // mousedown, mouseup도 트리거
+                                                    const mouseDownEvent = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+                                                    const mouseUpEvent = new MouseEvent('mouseup', { bubbles: true, cancelable: true });
+                                                    stack.dispatchEvent(mouseDownEvent);
+                                                    stack.dispatchEvent(mouseUpEvent);
                                                     
                                                     return { found: true, clicked: true };
                                                 }
