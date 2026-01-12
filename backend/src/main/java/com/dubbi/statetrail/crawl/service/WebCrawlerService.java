@@ -558,17 +558,32 @@ public class WebCrawlerService {
                 .filter(a -> a.priority() == 1)
                 .toList();
             
+            System.out.printf("[Crawl] Browser: Found %d priority-1 (navigation) actions out of %d total actions%n", 
+                    navigationActions.size(), actions.size());
+            
+            // Priority 1이 없으면 모든 액션 실행 (fallback)
+            List<ActionCandidate> actionsToExecute = navigationActions.isEmpty() ? actions : navigationActions;
+            if (navigationActions.isEmpty()) {
+                System.out.println("[Crawl] Browser: No priority-1 actions found, executing all actions");
+            }
+            
             // 1단계: 네비게이션 액션 (아코디언/메뉴) 먼저 실행하여 상태 확장
-            for (ActionCandidate action : navigationActions) {
+            for (ActionCandidate action : actionsToExecute) {
                 if (links.size() >= 20) break; // 최대 20개까지만
                 
+                System.out.printf("[Crawl] Browser: Executing action '%s' (type=%s, priority=%d)%n", 
+                        action.text(), action.type(), action.priority());
+                
                 StateChangeResult result = tryActionAndDetectStateChange(page, action, currentUrl, currentDomHash);
+                
                 if (result.changed()) {
-                    System.out.printf("[Crawl] Browser: State changed after action '%s': URL=%s, domHash=%s -> %s%n", 
-                            action.text(), currentUrl, currentDomHash, result.newDomHash());
+                    System.out.printf("[Crawl] Browser: State changed after action '%s': URL=%s -> %s, domHash=%s -> %s%n", 
+                            action.text(), currentUrl, result.newUrl(), currentDomHash, result.newDomHash());
                     
                     // 새로 발견된 링크 추가
                     links.addAll(result.discoveredLinks());
+                    System.out.printf("[Crawl] Browser: Discovered %d links from action '%s'%n", 
+                            result.discoveredLinks().size(), action.text());
                     
                     // 상태가 변경되었으므로, 새로운 UI Signature에서 추가 액션 추출 가능
                     if (result.newUiSignature() != null) {
@@ -579,6 +594,8 @@ public class WebCrawlerService {
                                     action.text(), currentCTAs.size(), newCTAs.size());
                         }
                     }
+                } else {
+                    System.out.printf("[Crawl] Browser: No state change detected after action '%s'%n", action.text());
                 }
             }
             
@@ -634,7 +651,10 @@ public class WebCrawlerService {
             }
             
             String actionType = href != null ? "navigate" : "click";
-            actions.add(new ActionCandidate(actionType, text, selector, href, priority));
+            ActionCandidate candidate = new ActionCandidate(actionType, text, selector, href, priority);
+            actions.add(candidate);
+            System.out.printf("[Crawl] Browser: Added action candidate: text='%s', type=%s, priority=%d, selector='%s'%n", 
+                    text, actionType, priority, selector);
         }
         
         // 우선순위별 정렬
@@ -658,6 +678,7 @@ public class WebCrawlerService {
             if ("navigate".equals(action.type()) && action.href() != null) {
                 // 링크인 경우 직접 URL로 이동
                 try {
+                    System.out.printf("[Crawl] Browser: Navigating to %s%n", action.href());
                     page.navigate(action.href(), new Page.NavigateOptions().setTimeout(5000));
                     clicked = true;
                 } catch (Exception e) {
@@ -666,21 +687,29 @@ public class WebCrawlerService {
             } else {
                 // 버튼 클릭
                 String textEscaped = action.text().replace("\\", "\\\\").replace("\"", "\\\"");
+                System.out.printf("[Crawl] Browser: Attempting to click button with text '%s'%n", action.text());
                 Object result = page.evaluate(String.format("""
                     () => {
                         const text = "%s";
                         const buttons = document.querySelectorAll('button, [role="button"], a');
+                        let found = false;
                         for (const btn of buttons) {
                             const btnText = (btn.innerText || btn.textContent || '').trim();
                             if (btnText === text) {
                                 btn.click();
-                                return true;
+                                found = true;
+                                break;
                             }
                         }
-                        return false;
+                        return found;
                     }
                 """, textEscaped));
                 clicked = result instanceof Boolean && (Boolean) result;
+                if (clicked) {
+                    System.out.printf("[Crawl] Browser: Successfully clicked button '%s'%n", action.text());
+                } else {
+                    System.out.printf("[Crawl] Browser: Failed to find/click button '%s'%n", action.text());
+                }
             }
             
             if (!clicked) {
@@ -706,10 +735,17 @@ public class WebCrawlerService {
             
             // 상태 변화 감지
             if (urlChanged || domChanged) {
+                System.out.printf("[Crawl] Browser: State change detected - URL changed: %s, DOM changed: %s%n", 
+                        urlChanged, domChanged);
+                
                 // 새로 발견된 링크 추출
                 List<LinkOut> discoveredLinks = extractStaticLinks(page).stream().toList();
+                System.out.printf("[Crawl] Browser: Found %d links in changed state%n", discoveredLinks.size());
                 
                 return new StateChangeResult(true, afterUrl, afterDomHash, newUiSignature, discoveredLinks);
+            } else {
+                System.out.printf("[Crawl] Browser: No state change detected (URL: %s, DOM: %s)%n", 
+                        urlChanged, domChanged);
             }
             
             return new StateChangeResult(false, beforeUrl, beforeDomHash, null, List.of());
