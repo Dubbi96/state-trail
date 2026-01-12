@@ -11,6 +11,7 @@ export default function ProjectDashboardPage() {
   const projectId = params.id;
   const [crawlStrategy, setCrawlStrategy] = useState<"BFS" | "MCS" | "BROWSER_BFS" | "BROWSER_MCS">("BROWSER_MCS");
   const [capturingAuthProfileId, setCapturingAuthProfileId] = useState<string | null>(null);
+  const [selectedAuthProfileId, setSelectedAuthProfileId] = useState<string | null>(null);
 
   const projectQuery = useQuery({
     queryKey: ["projects", projectId],
@@ -179,42 +180,85 @@ export default function ProjectDashboardPage() {
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">Crawl Runs</h2>
           </div>
-          <div className="mt-3 grid gap-2 md:grid-cols-[1fr_auto]">
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-slate-600">Strategy</label>
-              <select
-                className="rounded-md border border-slate-200 px-2 py-2 text-sm"
-                value={crawlStrategy}
-                onChange={(e) => setCrawlStrategy(e.target.value as any)}
-              >
-                <option value="BROWSER_MCS">BROWSER_MCS (권장: 깊은 탐색)</option>
-                <option value="BROWSER_BFS">BROWSER_BFS</option>
-                <option value="MCS">MCS</option>
-                <option value="BFS">BFS</option>
-              </select>
+          <div className="mt-3 space-y-3">
+            <div className="grid gap-2 md:grid-cols-2">
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-slate-600 whitespace-nowrap">Auth Profile</label>
+                <select
+                  className="flex-1 rounded-md border border-slate-200 px-2 py-2 text-sm"
+                  value={selectedAuthProfileId || ""}
+                  onChange={(e) => setSelectedAuthProfileId(e.target.value || null)}
+                  required
+                >
+                  <option value="">-- Auth Profile 선택 --</option>
+                  {authProfilesQuery.data?.items.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} ({a.type})
+                      {a.type === "STORAGE_STATE" && a.storageStateObjectKey ? " ✓" : ""}
+                      {a.type === "STORAGE_STATE" && !a.storageStateObjectKey ? " ⚠" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-slate-600 whitespace-nowrap">Strategy</label>
+                <select
+                  className="flex-1 rounded-md border border-slate-200 px-2 py-2 text-sm"
+                  value={crawlStrategy}
+                  onChange={(e) => setCrawlStrategy(e.target.value as any)}
+                >
+                  <option value="BROWSER_MCS">BROWSER_MCS (권장: 깊은 탐색)</option>
+                  <option value="BROWSER_BFS">BROWSER_BFS</option>
+                  <option value="MCS">MCS</option>
+                  <option value="BFS">BFS</option>
+                </select>
+              </div>
             </div>
+            {selectedAuthProfileId && (() => {
+              const selectedAuth = authProfilesQuery.data?.items.find(a => a.id === selectedAuthProfileId);
+              if (selectedAuth?.type === "STORAGE_STATE" && !selectedAuth.storageStateObjectKey) {
+                return (
+                  <div className="rounded-md bg-yellow-50 border border-yellow-200 px-2 py-1.5 text-xs text-yellow-800">
+                    ⚠ Warning: 선택한 Auth Profile "{selectedAuth.name}"에 Storage State가 설정되지 않았습니다.
+                    로그인이 필요한 페이지는 크롤링할 수 없습니다.
+                  </div>
+                );
+              }
+              return null;
+            })()}
             <button
-              className="rounded-md border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50"
+              className="w-full rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
               onClick={async () => {
-                const firstAuth = authProfilesQuery.data?.items[0];
-                if (!firstAuth) {
-                  alert("Auth Profile을 먼저 생성해주세요.");
+                if (!selectedAuthProfileId) {
+                  alert("Auth Profile을 선택해주세요.");
                   return;
                 }
-                if (firstAuth.type === "STORAGE_STATE" && !firstAuth.storageStateObjectKey) {
+                
+                const selectedAuth = authProfilesQuery.data?.items.find(a => a.id === selectedAuthProfileId);
+                if (!selectedAuth) {
+                  alert("선택한 Auth Profile을 찾을 수 없습니다.");
+                  return;
+                }
+                  
+                if (selectedAuth.type === "STORAGE_STATE" && !selectedAuth.storageStateObjectKey) {
                   const proceed = confirm(
-                    `Warning: Auth Profile "${firstAuth.name}"에 Storage State가 설정되지 않았습니다.\n` +
+                    `Warning: Auth Profile "${selectedAuth.name}"에 Storage State가 설정되지 않았습니다.\n` +
                     `로그인이 필요한 페이지는 크롤링할 수 없습니다.\n\n계속하시겠습니까?`
                   );
                   if (!proceed) return;
                 }
-                await api.crawlRuns.create(projectId, {
-                  authProfileId: firstAuth.id,
-                  startUrl: projectQuery.data?.baseUrl ?? "https://example.com",
-                  budget: { maxNodes: 300, maxEdges: 1200, maxDepth: 8, maxMinutes: 10, maxActionsPerState: 20 },
-                  strategy: crawlStrategy
-                });
-                runsQuery.refetch();
+                
+                try {
+                  await api.crawlRuns.create(projectId, {
+                    authProfileId: selectedAuthProfileId,
+                    startUrl: projectQuery.data?.baseUrl ?? "https://example.com",
+                    budget: { maxNodes: 300, maxEdges: 1200, maxDepth: 8, maxMinutes: 10, maxActionsPerState: 20 },
+                    strategy: crawlStrategy
+                  });
+                  runsQuery.refetch();
+                } catch (err: any) {
+                  alert(`RUN 생성 실패: ${err.message || err}`);
+                }
               }}
             >
               New Run
