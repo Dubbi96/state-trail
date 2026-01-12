@@ -3,6 +3,7 @@ package com.dubbi.statetrail.crawl.service;
 import com.microsoft.playwright.Browser;
 import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.BrowserType;
+import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.Response;
@@ -701,30 +702,81 @@ public class WebCrawlerService {
                     System.out.printf("[Crawl] Browser: Failed to navigate to %s: %s%n", action.href(), e.getMessage());
                 }
             } else {
-                // 버튼 클릭
-                String textEscaped = action.text().replace("\\", "\\\\").replace("\"", "\\\"");
+                // 버튼 클릭 - Playwright Locator 사용 (더 안정적)
                 System.out.printf("[Crawl] Browser: Attempting to click button with text '%s'%n", action.text());
-                Object result = page.evaluate(String.format("""
-                    () => {
-                        const text = "%s";
-                        const buttons = document.querySelectorAll('button, [role="button"], a');
-                        let found = false;
-                        for (const btn of buttons) {
-                            const btnText = (btn.innerText || btn.textContent || '').trim();
-                            if (btnText === text) {
-                                btn.click();
-                                found = true;
-                                break;
+                try {
+                    // 텍스트로 버튼 찾기 (접근성 기반)
+                    Locator buttonLocator = page.getByRole(com.microsoft.playwright.options.AriaRole.BUTTON, 
+                        new Page.GetByRoleOptions().setName(action.text()).setExact(true));
+                    
+                    // 버튼이 보이는지 확인
+                    if (buttonLocator.isVisible(new Locator.IsVisibleOptions().setTimeout(2000))) {
+                        System.out.printf("[Crawl] Browser: Button '%s' is visible, clicking...%n", action.text());
+                        buttonLocator.click(new Locator.ClickOptions().setTimeout(5000));
+                        clicked = true;
+                        System.out.printf("[Crawl] Browser: Successfully clicked button '%s' using Locator%n", action.text());
+                    } else {
+                        System.out.printf("[Crawl] Browser: Button '%s' not visible, trying fallback method%n", action.text());
+                        // Fallback: JavaScript로 클릭
+                        String textEscaped = action.text().replace("\\", "\\\\").replace("\"", "\\\"");
+                        Object result = page.evaluate(String.format("""
+                            () => {
+                                const text = "%s";
+                                const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+                                for (const btn of buttons) {
+                                    const btnText = (btn.innerText || btn.textContent || '').trim();
+                                    if (btnText === text) {
+                                        // 강제로 클릭 이벤트 발생
+                                        btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                        btn.focus();
+                                        btn.click();
+                                        // 추가로 이벤트 트리거
+                                        const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+                                        btn.dispatchEvent(clickEvent);
+                                        return true;
+                                    }
+                                }
+                                return false;
                             }
+                        """, textEscaped));
+                        clicked = result instanceof Boolean && (Boolean) result;
+                        if (clicked) {
+                            System.out.printf("[Crawl] Browser: Successfully clicked button '%s' using JavaScript fallback%n", action.text());
+                        } else {
+                            System.out.printf("[Crawl] Browser: Failed to find/click button '%s'%n", action.text());
                         }
-                        return found;
                     }
-                """, textEscaped));
-                clicked = result instanceof Boolean && (Boolean) result;
-                if (clicked) {
-                    System.out.printf("[Crawl] Browser: Successfully clicked button '%s'%n", action.text());
-                } else {
-                    System.out.printf("[Crawl] Browser: Failed to find/click button '%s'%n", action.text());
+                } catch (Exception e) {
+                    System.out.printf("[Crawl] Browser: Error clicking button '%s': %s, trying JavaScript fallback%n", 
+                            action.text(), e.getMessage());
+                    // Fallback: JavaScript로 클릭
+                    try {
+                        String textEscaped = action.text().replace("\\", "\\\\").replace("\"", "\\\"");
+                        Object result = page.evaluate(String.format("""
+                            () => {
+                                const text = "%s";
+                                const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+                                for (const btn of buttons) {
+                                    const btnText = (btn.innerText || btn.textContent || '').trim();
+                                    if (btnText === text) {
+                                        btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                        btn.focus();
+                                        btn.click();
+                                        const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+                                        btn.dispatchEvent(clickEvent);
+                                        return true;
+                                    }
+                                }
+                                return false;
+                            }
+                        """, textEscaped));
+                        clicked = result instanceof Boolean && (Boolean) result;
+                        if (clicked) {
+                            System.out.printf("[Crawl] Browser: Successfully clicked button '%s' using JavaScript fallback%n", action.text());
+                        }
+                    } catch (Exception e2) {
+                        System.out.printf("[Crawl] Browser: JavaScript fallback also failed: %s%n", e2.getMessage());
+                    }
                 }
             }
             
@@ -732,36 +784,65 @@ public class WebCrawlerService {
                 return new StateChangeResult(false, beforeUrl, beforeDomHash, null, List.of());
             }
             
-            // DOM 안정화 대기 (아코디언 애니메이션 완료 대기)
-            page.waitForTimeout(1000); // 아코디언 펼침 애니메이션 대기
+            // 아코디언이 실제로 펼쳐질 때까지 대기
+            System.out.printf("[Crawl] Browser: Waiting for accordion '%s' to expand...%n", action.text());
+            boolean accordionIsExpanded = false;
+            try {
+                // 아코디언이 펼쳐질 때까지 최대 3초 대기
+                String textEscaped = action.text().replace("\\", "\\\\").replace("\"", "\\\"");
+                Object expandedResult = page.waitForFunction(String.format("""
+                    () => {
+                        const text = "%s";
+                        const buttons = document.querySelectorAll('button, [role="button"]');
+                        for (const btn of buttons) {
+                            const btnText = (btn.innerText || btn.textContent || '').trim();
+                            if (btnText === text) {
+                                const expanded = btn.getAttribute('aria-expanded') === 'true' ||
+                                               btn.closest('[aria-expanded="true"]') !== null ||
+                                               btn.closest('.Mui-expanded') !== null ||
+                                               btn.closest('.MuiAccordion-expanded') !== null;
+                                return expanded;
+                            }
+                        }
+                        return false;
+                    }
+                """, textEscaped), new Page.WaitForFunctionOptions().setTimeout(3000));
+                accordionIsExpanded = expandedResult instanceof Boolean && (Boolean) expandedResult;
+                System.out.printf("[Crawl] Browser: Accordion expanded after click: %s (waited for expansion)%n", accordionIsExpanded);
+            } catch (Exception e) {
+                // 타임아웃되었거나 아코디언이 아닐 수 있음
+                System.out.printf("[Crawl] Browser: Timeout waiting for accordion expansion or not an accordion: %s%n", e.getMessage());
+                // 다시 한 번 확인
+                String textEscaped = action.text().replace("\\", "\\\\").replace("\"", "\\\"");
+                Object accordionExpanded = page.evaluate(String.format("""
+                    () => {
+                        const text = "%s";
+                        const buttons = document.querySelectorAll('button, [role="button"]');
+                        for (const btn of buttons) {
+                            const btnText = (btn.innerText || btn.textContent || '').trim();
+                            if (btnText === text) {
+                                const expanded = btn.getAttribute('aria-expanded') === 'true' ||
+                                               btn.closest('[aria-expanded="true"]') !== null ||
+                                               btn.closest('.Mui-expanded') !== null ||
+                                               btn.closest('.MuiAccordion-expanded') !== null;
+                                return expanded;
+                            }
+                        }
+                        return false;
+                    }
+                """, textEscaped));
+                accordionIsExpanded = accordionExpanded instanceof Boolean && (Boolean) accordionExpanded;
+                System.out.printf("[Crawl] Browser: Accordion expanded check (final): %s%n", accordionIsExpanded);
+            }
+            
+            // DOM 안정화 대기
+            page.waitForTimeout(500);
             try {
                 page.waitForLoadState(LoadState.NETWORKIDLE, new Page.WaitForLoadStateOptions().setTimeout(2000));
             } catch (Exception e) {
                 // 타임아웃되어도 계속
             }
-            page.waitForTimeout(1000); // 추가 안정화 시간
-            
-            // 아코디언이 실제로 펼쳐졌는지 확인
-            Object accordionExpanded = page.evaluate(String.format("""
-                () => {
-                    const text = "%s";
-                    const buttons = document.querySelectorAll('button, [role="button"]');
-                    for (const btn of buttons) {
-                        const btnText = (btn.innerText || btn.textContent || '').trim();
-                        if (btnText === text) {
-                            // 아코디언이 펼쳐졌는지 확인 (aria-expanded 또는 부모 요소 확인)
-                            const expanded = btn.getAttribute('aria-expanded') === 'true' ||
-                                           btn.closest('[aria-expanded="true"]') !== null ||
-                                           btn.closest('.Mui-expanded') !== null;
-                            return expanded;
-                        }
-                    }
-                    return false;
-                }
-            """, action.text().replace("\\", "\\\\").replace("\"", "\\\"")));
-            
-            boolean accordionIsExpanded = accordionExpanded instanceof Boolean && (Boolean) accordionExpanded;
-            System.out.printf("[Crawl] Browser: Accordion expanded after click: %s%n", accordionIsExpanded);
+            page.waitForTimeout(500);
             
             // 상태 변화 확인
             String afterUrl = page.url();
