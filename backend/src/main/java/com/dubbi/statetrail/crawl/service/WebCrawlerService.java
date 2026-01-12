@@ -1098,62 +1098,98 @@ public class WebCrawlerService {
                     }
                     
                     if (accordionPanel) {
-                        // 펼쳐진 패널 내부의 모든 링크 찾기
-                        accordionPanel.querySelectorAll('a[href], [class*="MuiListItemButton"] a, [class*="MuiListItem-root"] a').forEach(a => {
-                            try {
-                                const href = a.href || a.getAttribute('href');
-                                if (href && typeof href === 'string' && 
-                                    !href.startsWith('javascript:') && 
-                                    !href.startsWith('#') && 
-                                    href !== '') {
-                                    let url;
-                                    try {
-                                        url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
-                                        url = url.split('#')[0];
-                                    } catch (e) {
+                        // 펼쳐진 패널 내부의 모든 링크 찾기 (더 포괄적으로)
+                        const linkSelectors = [
+                            'a[href]',
+                            '[class*="ListItemButton"]',
+                            '[class*="ListItem-root"]',
+                            '[class*="MenuItem"]',
+                            '[role="link"]',
+                            '[role="menuitem"]'
+                        ];
+                        
+                        linkSelectors.forEach(selector => {
+                            accordionPanel.querySelectorAll(selector).forEach(el => {
+                                try {
+                                    // 요소가 실제로 보이는지 확인
+                                    if (el.offsetParent === null && el.style.display === 'none') {
                                         return;
                                     }
                                     
-                                    if (url !== currentUrl && (url.startsWith('http://') || url.startsWith('https://'))) {
-                                        const linkText = (a.innerText || a.textContent || '').trim().slice(0, 100);
-                                        links.push({
-                                            url: url,
-                                            text: linkText || url
-                                        });
+                                    let url = null;
+                                    let linkText = '';
+                                    
+                                    // href 속성 확인
+                                    if (el.tagName === 'A' && el.href) {
+                                        url = el.href;
+                                        linkText = (el.innerText || el.textContent || '').trim();
                                     }
+                                    // data 속성 확인 (React Router)
+                                    else if (el.getAttribute('data-href')) {
+                                        url = el.getAttribute('data-href');
+                                        linkText = (el.innerText || el.textContent || '').trim();
+                                    }
+                                    else if (el.getAttribute('data-to')) {
+                                        url = el.getAttribute('data-to');
+                                        linkText = (el.innerText || el.textContent || '').trim();
+                                    }
+                                    // onClick이 있는 경우 부모에서 href 찾기
+                                    else if (el.onclick || el.getAttribute('onclick')) {
+                                        let parent = el.parentElement;
+                                        while (parent && parent !== accordionPanel) {
+                                            if (parent.tagName === 'A' && parent.href) {
+                                                url = parent.href;
+                                                linkText = (el.innerText || el.textContent || parent.innerText || parent.textContent || '').trim();
+                                                break;
+                                            }
+                                            parent = parent.parentElement;
+                                        }
+                                    }
+                                    // ListItemButton/MenuItem의 경우 클릭 가능한 요소로 간주하고 텍스트로 URL 추정
+                                    else if (el.classList.contains('MuiListItemButton-root') || 
+                                             el.classList.contains('MuiMenuItem-root') ||
+                                             el.getAttribute('role') === 'menuitem') {
+                                        linkText = (el.innerText || el.textContent || '').trim();
+                                        // 텍스트 기반으로 URL 추정 (예: "요청 목록" -> "/requests")
+                                        // 하지만 이건 신뢰할 수 없으므로 일단 스킵
+                                        return;
+                                    }
+                                    
+                                    if (url && typeof url === 'string' && 
+                                        !url.startsWith('javascript:') && 
+                                        !url.startsWith('#') && 
+                                        url !== '') {
+                                        try {
+                                            let finalUrl = url.startsWith('http') ? url : new URL(url, baseUrl).href;
+                                            finalUrl = finalUrl.split('#')[0];
+                                            
+                                            if (finalUrl !== currentUrl && (finalUrl.startsWith('http://') || finalUrl.startsWith('https://'))) {
+                                                links.push({
+                                                    url: finalUrl,
+                                                    text: linkText || finalUrl
+                                                });
+                                            }
+                                        } catch (e) {
+                                            // URL 파싱 실패
+                                        }
+                                    }
+                                } catch (e) {
+                                    // 개별 요소 처리 실패
                                 }
-                            } catch (e) {}
+                            });
                         });
                         
-                        // ListItemButton 내부의 링크도 찾기 (React Router Link)
-                        accordionPanel.querySelectorAll('[class*="MuiListItemButton"], [class*="MuiListItem-root"]').forEach(item => {
-                            try {
-                                let target = item;
-                                while (target && target !== accordionPanel) {
-                                    if (target.tagName === 'A') {
-                                        const href = target.href || target.getAttribute('href');
-                                        if (href && typeof href === 'string' && 
-                                            !href.startsWith('javascript:') && 
-                                            !href.startsWith('#') && 
-                                            href !== '') {
-                                            try {
-                                                let url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
-                                                url = url.split('#')[0];
-                                                if (url !== currentUrl && (url.startsWith('http://') || url.startsWith('https://'))) {
-                                                    const linkText = (target.innerText || target.textContent || item.innerText || item.textContent || '').trim().slice(0, 100);
-                                                    links.push({
-                                                        url: url,
-                                                        text: linkText || url
-                                                    });
-                                                }
-                                            } catch (e) {}
-                                        }
-                                        break;
-                                    }
-                                    target = target.parentElement;
-                                }
-                            } catch (e) {}
+                        // 중복 제거
+                        const uniqueLinks = [];
+                        const seenUrls = new Set();
+                        links.forEach(link => {
+                            if (!seenUrls.has(link.url)) {
+                                seenUrls.add(link.url);
+                                uniqueLinks.push(link);
+                            }
                         });
+                        
+                        return uniqueLinks;
                     }
                     
                     return links;
