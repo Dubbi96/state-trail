@@ -105,6 +105,21 @@ public class FlowEntity {
     public Map<String, Object> getTags() {
         return tags;
     }
+
+    public void setName(String name) {
+        this.name = name;
+        this.updatedAt = Instant.now();
+    }
+
+    public void setSteps(List<Map<String, Object>> steps) {
+        this.steps = steps;
+        this.updatedAt = Instant.now();
+    }
+
+    public void setTags(Map<String, Object> tags) {
+        this.tags = tags;
+        this.updatedAt = Instant.now();
+    }
 }
 
 
