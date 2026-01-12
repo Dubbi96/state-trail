@@ -471,8 +471,14 @@ public class WebCrawlerService {
         
         Response res = page.navigate(url, new Page.NavigateOptions().setTimeout(15_000));
         page.waitForLoadState(LoadState.DOMCONTENTLOADED);
-        // hydration / client fetch time
-        page.waitForTimeout(700);
+        // SPA hydration / client fetch time - React 앱이 완전히 렌더링될 때까지 대기
+        page.waitForTimeout(2000);
+        // 네트워크가 안정될 때까지 추가 대기 (API 호출 완료 대기)
+        try {
+            page.waitForLoadState(LoadState.NETWORKIDLE, new Page.WaitForLoadStateOptions().setTimeout(5_000));
+        } catch (Exception e) {
+            // 타임아웃되어도 계속 진행
+        }
 
         String contentType = null;
         Integer status = null;
@@ -499,12 +505,200 @@ public class WebCrawlerService {
     }
 
     private static Set<LinkOut> extractLinksFromBrowser(Page page) {
-        // Extract all links including relative URLs - browser will resolve them to absolute URLs
-        Object raw = page.evaluate("() => Array.from(document.querySelectorAll('a[href]')).map(a => ({ href: a.href, text: (a.innerText || a.textContent || '').trim().slice(0, 200) }))");
+        // SPA(React Router 등) 지원: 다양한 형태의 링크 추출
+        Object raw = page.evaluate("""
+            () => {
+                const links = new Set();
+                const baseUrl = window.location.origin;
+                
+                // 1. 일반 <a href> 링크
+                document.querySelectorAll('a[href]').forEach(a => {
+                    try {
+                        const href = a.href || a.getAttribute('href');
+                        if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {
+                            const url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
+                            links.add(JSON.stringify({
+                                href: url,
+                                text: (a.innerText || a.textContent || '').trim().slice(0, 200)
+                            }));
+                        }
+                    } catch (e) {}
+                });
+                
+                // 2. React Router Link 컴포넌트 (to 속성)
+                document.querySelectorAll('[data-to], [to]').forEach(el => {
+                    try {
+                        const to = el.getAttribute('data-to') || el.getAttribute('to');
+                        if (to && !to.startsWith('#')) {
+                            const url = to.startsWith('http') ? to : new URL(to, baseUrl).href;
+                            links.add(JSON.stringify({
+                                href: url,
+                                text: (el.innerText || el.textContent || '').trim().slice(0, 200)
+                            }));
+                        }
+                    } catch (e) {}
+                });
+                
+                // 3. onClick 핸들러가 있는 버튼/요소 (React Router navigate 등)
+                document.querySelectorAll('button, [role="button"], [role="link"], [onclick]').forEach(el => {
+                    try {
+                        // href 속성이 있는 경우 (button이나 a가 아닌 요소)
+                        const href = el.getAttribute('href');
+                        if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {
+                            const url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
+                            links.add(JSON.stringify({
+                                href: url,
+                                text: (el.innerText || el.textContent || '').trim().slice(0, 200)
+                            }));
+                        }
+                        // data-href, data-url 등의 속성
+                        const dataHref = el.getAttribute('data-href') || el.getAttribute('data-url');
+                        if (dataHref && !dataHref.startsWith('javascript:') && !dataHref.startsWith('#')) {
+                            const url = dataHref.startsWith('http') ? dataHref : new URL(dataHref, baseUrl).href;
+                            links.add(JSON.stringify({
+                                href: url,
+                                text: (el.innerText || el.textContent || '').trim().slice(0, 200)
+                            }));
+                        }
+                    } catch (e) {}
+                });
+                
+                // 4. React Router의 실제 라우트 정보 추출 (window.__REACT_ROUTER__ 또는 히스토리 기반)
+                try {
+                    if (window.__REACT_ROUTER_STATE__) {
+                        // React Router 상태가 있는 경우
+                        Object.values(window.__REACT_ROUTER_STATE__.routes || {}).forEach(route => {
+                            if (route.path && route.path.startsWith('/')) {
+                                const url = new URL(route.path, baseUrl).href;
+                                links.add(JSON.stringify({
+                                    href: url,
+                                    text: route.path
+                                }));
+                            }
+                        });
+                    }
+                } catch (e) {}
+                
+                // 5. MUI 및 Material-UI 컴포넌트에서 링크 추출
+                // ListItemButton, ListItem 등에서 href나 data 속성 찾기
+                document.querySelectorAll('[class*="MuiListItemButton"], [class*="MuiListItem-root"], [class*="MuiAccordionSummary"]').forEach(el => {
+                    try {
+                        const text = (el.innerText || el.textContent || '').trim();
+                        // 가장 가까운 부모 또는 자신에서 href 속성 찾기
+                        let target = el;
+                        for (let i = 0; i < 3 && target; i++) {
+                            const href = target.getAttribute('href') || target.getAttribute('data-href');
+                            if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {
+                                const url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
+                                links.add(JSON.stringify({
+                                    href: url,
+                                    text: text.slice(0, 200)
+                                }));
+                                break;
+                            }
+                            target = target.parentElement;
+                        }
+                        
+                        // 클릭 핸들러가 있고 경로 패턴이 있는 경우 (프로그래밍적 네비게이션)
+                        if (!target || !target.getAttribute('href')) {
+                            // 텍스트에서 일반적인 경로 패턴 추출 (예: "요청 관리" -> /requests)
+                            // 또는 aria-label에서 경로 추출
+                            const ariaLabel = el.getAttribute('aria-label');
+                            const allText = (text + ' ' + (ariaLabel || '')).toLowerCase();
+                            // 일반적인 경로 패턴 매칭
+                            const commonPaths = {
+                                '요청': '/requests',
+                                'request': '/requests',
+                                '관리': '/admin',
+                                'admin': '/admin',
+                                '생성': '/create',
+                                'create': '/create',
+                                '목록': '/list',
+                                'list': '/list'
+                            };
+                            for (const [key, path] of Object.entries(commonPaths)) {
+                                if (allText.includes(key)) {
+                                    const url = new URL(path, baseUrl).href;
+                                    links.add(JSON.stringify({
+                                        href: url,
+                                        text: text.slice(0, 200)
+                                    }));
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (e) {}
+                });
+                
+                // 6. 모든 클릭 가능한 요소에서 data-* 속성으로 URL 추출
+                document.querySelectorAll('[data-path], [data-route], [data-page]').forEach(el => {
+                    try {
+                        const path = el.getAttribute('data-path') || el.getAttribute('data-route') || el.getAttribute('data-page');
+                        if (path && path.startsWith('/')) {
+                            const url = new URL(path, baseUrl).href;
+                            links.add(JSON.stringify({
+                                href: url,
+                                text: (el.innerText || el.textContent || '').trim().slice(0, 200)
+                            }));
+                        }
+                    } catch (e) {}
+                });
+                
+                // 7. 실제 클릭 가능한 모든 요소에서 href나 router 패턴 찾기 (최후 수단)
+                // 네비게이션 메뉴 내의 모든 클릭 가능한 요소
+                document.querySelectorAll('nav a, nav button, [role="navigation"] a, [role="navigation"] button, [class*="menu"] a, [class*="menu"] button, [class*="sidebar"] a, [class*="sidebar"] button').forEach(el => {
+                    try {
+                        const text = (el.innerText || el.textContent || '').trim();
+                        if (text.length === 0) return;
+                        
+                        // href 속성이 있는 경우
+                        const href = el.getAttribute('href');
+                        if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {
+                            const url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
+                            links.add(JSON.stringify({
+                                href: url,
+                                text: text.slice(0, 200)
+                            }));
+                            return;
+                        }
+                        
+                        // button이고 텍스트가 있는 경우, 텍스트 기반으로 경로 추측
+                        if (el.tagName === 'BUTTON' || el.getAttribute('role') === 'button') {
+                            // 텍스트를 기반으로 일반적인 경로 패턴 생성
+                            const textLower = text.toLowerCase().replace(/[^a-z0-9가-힣]/g, '');
+                            // 공통 패턴: 텍스트 -> 경로
+                            const textToPathMap = {
+                                '요청관리': '/requests',
+                                '요청목록': '/requests',
+                                '수매관리': '/purchase',
+                                '부관리자관리': '/admin/sub',
+                                '지역관리': '/region',
+                                '지역생성': '/region/create'
+                            };
+                            
+                            for (const [key, path] of Object.entries(textToPathMap)) {
+                                if (textLower.includes(key)) {
+                                    const url = new URL(path, baseUrl).href;
+                                    links.add(JSON.stringify({
+                                        href: url,
+                                        text: text.slice(0, 200)
+                                    }));
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (e) {}
+                });
+                
+                return Array.from(links).map(s => JSON.parse(s));
+            }
+        """);
+        
         if (!(raw instanceof List<?> list)) {
             System.out.println("[Crawl] Browser: No links found or evaluation failed");
             return Set.of();
         }
+        
         Set<LinkOut> out = new HashSet<>();
         for (Object item : list) {
             if (!(item instanceof Map<?, ?> m)) continue;
@@ -512,15 +706,46 @@ public class WebCrawlerService {
             if (hrefObj == null) continue;
             String href = String.valueOf(hrefObj);
             if (href.isBlank()) continue;
-            // Browser's a.href is always absolute, so we can accept all http/https URLs
+            
+            // URL 정규화: fragment 제거
+            try {
+                java.net.URI uri = java.net.URI.create(href);
+                if (uri.getFragment() != null) {
+                    href = new java.net.URI(uri.getScheme(), uri.getUserInfo(), uri.getHost(), uri.getPort(), 
+                            uri.getPath(), uri.getQuery(), null).toString();
+                }
+            } catch (Exception e) {
+                // URL 파싱 실패 시 건너뛰기
+                continue;
+            }
+            
+            // http/https만 허용
             if (!(href.startsWith("http://") || href.startsWith("https://"))) {
                 continue;
             }
+            
+            // 자기 자신 페이지는 제외 (순환 방지)
+            String currentUrl = page.url();
+            try {
+                java.net.URI current = java.net.URI.create(currentUrl);
+                java.net.URI link = java.net.URI.create(href);
+                String currentPath = current.getPath() != null ? current.getPath() : "/";
+                String linkPath = link.getPath() != null ? link.getPath() : "/";
+                if (current.getHost() != null && current.getHost().equals(link.getHost()) && 
+                    currentPath.equals(linkPath) && 
+                    (current.getQuery() == null ? "" : current.getQuery()).equals(link.getQuery() == null ? "" : link.getQuery())) {
+                    continue;
+                }
+            } catch (Exception e) {
+                // 비교 실패해도 계속 진행
+            }
+            
             Object textObj = m.get("text");
             String text = textObj == null ? "" : String.valueOf(textObj);
             out.add(new LinkOut(href, text));
         }
-        System.out.printf("[Crawl] Browser: Extracted %d links from page%n", out.size());
+        
+        System.out.printf("[Crawl] Browser: Extracted %d links from page (after deduplication)%n", out.size());
         return out;
     }
 
