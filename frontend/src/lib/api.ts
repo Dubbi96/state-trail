@@ -49,6 +49,15 @@ export const api = {
         if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
         return res.json() as Promise<AuthProfileDTO>;
       });
+    },
+    captureStorageState: (projectId: string, authProfileId: string, loginUrl: string, timeoutMinutes: number = 5) => {
+      return http<{ ok: boolean; message: string }>(
+        `/api/projects/${projectId}/auth-profiles/${authProfileId}/capture-storage-state`,
+        {
+          method: "POST",
+          body: JSON.stringify({ loginUrl, timeoutMinutes })
+        }
+      );
     }
   },
   crawlRuns: {

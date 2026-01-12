@@ -4,9 +4,12 @@ import com.dubbi.statetrail.auth.api.dto.AuthProfileDtos.AuthProfileDTO;
 import com.dubbi.statetrail.auth.api.dto.AuthProfileDtos.CreateAuthProfileRequest;
 import com.dubbi.statetrail.auth.domain.AuthProfileEntity;
 import com.dubbi.statetrail.auth.domain.AuthProfileRepository;
+import com.dubbi.statetrail.auth.service.StorageStateCaptureService;
 import com.dubbi.statetrail.common.dto.ListResponse;
 import com.dubbi.statetrail.common.storage.ObjectStorageService;
 import com.dubbi.statetrail.project.domain.ProjectRepository;
+import java.time.Duration;
+import java.util.Map;
 import jakarta.validation.Valid;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
@@ -28,15 +31,18 @@ public class AuthProfileController {
     private final ProjectRepository projectRepository;
     private final AuthProfileRepository authProfileRepository;
     private final ObjectStorageService objectStorageService;
+    private final StorageStateCaptureService storageStateCaptureService;
 
     public AuthProfileController(
             ProjectRepository projectRepository, 
             AuthProfileRepository authProfileRepository,
-            ObjectStorageService objectStorageService
+            ObjectStorageService objectStorageService,
+            StorageStateCaptureService storageStateCaptureService
     ) {
         this.projectRepository = projectRepository;
         this.authProfileRepository = authProfileRepository;
         this.objectStorageService = objectStorageService;
+        this.storageStateCaptureService = storageStateCaptureService;
     }
 
     @GetMapping
@@ -89,6 +95,37 @@ public class AuthProfileController {
         }
     }
 
+    @PostMapping("/{authProfileId}/capture-storage-state")
+    public ResponseEntity<Map<String, Object>> captureStorageState(
+            @PathVariable UUID projectId,
+            @PathVariable UUID authProfileId,
+            @RequestBody CaptureStorageStateRequest req
+    ) {
+        var profileOpt = authProfileRepository.findById(authProfileId);
+        if (profileOpt.isEmpty()) return ResponseEntity.notFound().build();
+        
+        var profile = profileOpt.get();
+        if (!profile.getProject().getId().equals(projectId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
+        if (profile.getType() != com.dubbi.statetrail.auth.domain.AuthProfileType.STORAGE_STATE) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+        }
+
+        // 비동기로 storage state 캡처 시작
+        storageStateCaptureService.captureStorageState(
+                authProfileId,
+                req.loginUrl(),
+                Duration.ofMinutes(req.timeoutMinutes())
+        );
+
+        return ResponseEntity.ok(Map.of(
+                "ok", true,
+                "message", "브라우저가 열렸습니다. 로그인을 완료해주세요. 로그인 완료 후 자동으로 storage state가 저장됩니다."
+        ));
+    }
+
     @PutMapping("/{authProfileId}/login-script")
     public ResponseEntity<AuthProfileDTO> updateLoginScript(
             @PathVariable UUID projectId,
@@ -116,6 +153,8 @@ public class AuthProfileController {
     }
 
     public record UpdateLoginScriptRequest(String script) {}
+    
+    public record CaptureStorageStateRequest(String loginUrl, int timeoutMinutes) {}
 }
 
 

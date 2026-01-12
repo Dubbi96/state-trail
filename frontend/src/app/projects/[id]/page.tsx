@@ -64,28 +64,58 @@ export default function ProjectDashboardPage() {
                 <div className="font-medium">{a.name}</div>
                 <div className="text-sm text-slate-600">{a.type}</div>
                 {a.type === "STORAGE_STATE" && (
-                  <div className="mt-2">
-                    <label className="block text-xs text-slate-600 mb-1">
-                      Storage State 파일 업로드 (Playwright에서 추출한 .json 파일)
-                    </label>
-                    <input
-                      type="file"
-                      accept=".json"
-                      className="text-xs"
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
+                  <div className="mt-2 space-y-2">
+                    <div>
+                      <label className="block text-xs text-slate-600 mb-1">
+                        Storage State 자동 캡처 (권장)
+                      </label>
+                      <button
+                        className="rounded-md bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-700"
+                        onClick={async () => {
+                          const loginUrl = projectQuery.data?.baseUrl ?? "https://teds-roasting.netlify.app/";
                           try {
-                            await api.authProfiles.uploadStorageState(projectId, a.id, file);
-                            authProfilesQuery.refetch();
-                            alert("Storage state 업로드 완료!");
-                          } catch (err) {
-                            alert(`업로드 실패: ${err}`);
+                            const result = await api.authProfiles.captureStorageState(
+                              projectId,
+                              a.id,
+                              loginUrl,
+                              5 // 5분 타임아웃
+                            );
+                            alert(result.message);
+                            // 일정 시간 후 새로고침 (storage state 저장 확인)
+                            setTimeout(() => {
+                              authProfilesQuery.refetch();
+                            }, 10000);
+                          } catch (err: any) {
+                            alert(`캡처 실패: ${err.message || err}`);
                           }
-                          e.target.value = ""; // Reset input
-                        }
-                      }}
-                    />
+                        }}
+                      >
+                        브라우저 열기 및 로그인 캡처
+                      </button>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-600 mb-1">
+                        또는 수동 업로드 (Playwright에서 추출한 .json 파일)
+                      </label>
+                      <input
+                        type="file"
+                        accept=".json"
+                        className="text-xs"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            try {
+                              await api.authProfiles.uploadStorageState(projectId, a.id, file);
+                              authProfilesQuery.refetch();
+                              alert("Storage state 업로드 완료!");
+                            } catch (err) {
+                              alert(`업로드 실패: ${err}`);
+                            }
+                            e.target.value = ""; // Reset input
+                          }
+                        }}
+                      />
+                    </div>
                   </div>
                 )}
               </div>
