@@ -714,52 +714,103 @@ public class WebCrawlerService {
                     System.out.printf("[Crawl] Browser: Failed to navigate to %s: %s%n", action.href(), e.getMessage());
                 }
             } else {
-                // 버튼 클릭 - Playwright Locator 사용 (더 안정적)
-                System.out.printf("[Crawl] Browser: Attempting to click button with text '%s'%n", action.text());
+                // 버튼 클릭 - 아코디언/드롭다운 상태 확인 후 토글
+                System.out.printf("[Crawl] Browser: Attempting to interact with button '%s'%n", action.text());
                 try {
-                    // 텍스트로 버튼 찾기 (접근성 기반)
-                    Locator buttonLocator = page.getByRole(com.microsoft.playwright.options.AriaRole.BUTTON, 
-                        new Page.GetByRoleOptions().setName(action.text()).setExact(true));
-                    
-                    // 버튼이 보이는지 확인
-                    if (buttonLocator.isVisible(new Locator.IsVisibleOptions().setTimeout(2000))) {
-                        System.out.printf("[Crawl] Browser: Button '%s' is visible, clicking...%n", action.text());
-                        buttonLocator.click(new Locator.ClickOptions().setTimeout(5000));
-                        clicked = true;
-                        System.out.printf("[Crawl] Browser: Successfully clicked button '%s' using Locator%n", action.text());
-                    } else {
-                        System.out.printf("[Crawl] Browser: Button '%s' not visible, trying fallback method%n", action.text());
-                        // Fallback: JavaScript로 클릭
-                        String textEscaped = action.text().replace("\\", "\\\\").replace("\"", "\\\"");
-                        Object result = page.evaluate(String.format("""
-                            () => {
-                                const text = "%s";
-                                const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
-                                for (const btn of buttons) {
-                                    const btnText = (btn.innerText || btn.textContent || '').trim();
-                                    if (btnText === text) {
-                                        // 강제로 클릭 이벤트 발생
-                                        btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                        btn.focus();
-                                        btn.click();
-                                        // 추가로 이벤트 트리거
-                                        const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
-                                        btn.dispatchEvent(clickEvent);
-                                        return true;
+                    // 먼저 현재 상태 확인 (이미 펼쳐져 있는지)
+                    String textEscaped = action.text().replace("\\", "\\\\").replace("\"", "\\\"");
+                    Object currentState = page.evaluate(String.format("""
+                        () => {
+                            const text = "%s";
+                            const buttons = document.querySelectorAll('button, [role="button"]');
+                            for (const btn of buttons) {
+                                const btnText = (btn.innerText || btn.textContent || '').trim();
+                                if (btnText === text) {
+                                    // 아코디언이 이미 펼쳐져 있는지 확인
+                                    const isExpanded = btn.getAttribute('aria-expanded') === 'true' ||
+                                                      btn.closest('[aria-expanded="true"]') !== null ||
+                                                      btn.closest('.Mui-expanded') !== null ||
+                                                      btn.closest('.MuiAccordion-expanded') !== null;
+                                    
+                                    // 패널 내부에 링크가 있는지 확인
+                                    let accordionPanel = btn.closest('.MuiAccordion-root');
+                                    if (!accordionPanel) {
+                                        accordionPanel = btn.parentElement;
+                                        while (accordionPanel && !accordionPanel.classList.contains('MuiAccordion-root')) {
+                                            accordionPanel = accordionPanel.parentElement;
+                                        }
                                     }
+                                    const hasVisibleLinks = accordionPanel && 
+                                        accordionPanel.querySelectorAll('a[href], [class*="ListItem"]').length > 0;
+                                    
+                                    return {
+                                        isExpanded: isExpanded,
+                                        hasVisibleLinks: hasVisibleLinks,
+                                        needsClick: !isExpanded || !hasVisibleLinks
+                                    };
                                 }
-                                return false;
                             }
-                        """, textEscaped));
-                        clicked = result instanceof Boolean && (Boolean) result;
-                        if (clicked) {
-                            System.out.printf("[Crawl] Browser: Successfully clicked button '%s' using JavaScript fallback%n", action.text());
+                            return { isExpanded: false, hasVisibleLinks: false, needsClick: true };
+                        }
+                    """, textEscaped));
+                    
+                    boolean needsClick = true;
+                    boolean alreadyExpanded = false;
+                    if (currentState instanceof Map<?, ?>) {
+                        Map<?, ?> state = (Map<?, ?>) currentState;
+                        Object needsClickObj = state.get("needsClick");
+                        Object isExpandedObj = state.get("isExpanded");
+                        needsClick = needsClickObj instanceof Boolean ? (Boolean) needsClickObj : true;
+                        alreadyExpanded = isExpandedObj instanceof Boolean ? (Boolean) isExpandedObj : false;
+                    }
+                    
+                    if (alreadyExpanded) {
+                        System.out.printf("[Crawl] Browser: Accordion '%s' is already expanded, skipping click%n", action.text());
+                        clicked = true; // 클릭하지 않았지만 이미 펼쳐져 있으므로 성공으로 간주
+                    } else {
+                        System.out.printf("[Crawl] Browser: Accordion '%s' is closed, clicking to expand...%n", action.text());
+                        
+                        // 텍스트로 버튼 찾기 (접근성 기반)
+                        Locator buttonLocator = page.getByRole(com.microsoft.playwright.options.AriaRole.BUTTON, 
+                            new Page.GetByRoleOptions().setName(action.text()).setExact(true));
+                        
+                        // 버튼이 보이는지 확인
+                        if (buttonLocator.isVisible(new Locator.IsVisibleOptions().setTimeout(2000))) {
+                            System.out.printf("[Crawl] Browser: Button '%s' is visible, clicking...%n", action.text());
+                            buttonLocator.click(new Locator.ClickOptions().setTimeout(5000));
+                            clicked = true;
+                            System.out.printf("[Crawl] Browser: Successfully clicked button '%s' using Locator%n", action.text());
                         } else {
-                            System.out.printf("[Crawl] Browser: Failed to find/click button '%s'%n", action.text());
+                            System.out.printf("[Crawl] Browser: Button '%s' not visible, trying fallback method%n", action.text());
+                            // Fallback: JavaScript로 클릭
+                            Object result = page.evaluate(String.format("""
+                                () => {
+                                    const text = "%s";
+                                    const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+                                    for (const btn of buttons) {
+                                        const btnText = (btn.innerText || btn.textContent || '').trim();
+                                        if (btnText === text) {
+                                            btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                            btn.focus();
+                                            btn.click();
+                                            const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+                                            btn.dispatchEvent(clickEvent);
+                                            return true;
+                                        }
+                                    }
+                                    return false;
+                                }
+                            """, textEscaped));
+                            clicked = result instanceof Boolean && (Boolean) result;
+                            if (clicked) {
+                                System.out.printf("[Crawl] Browser: Successfully clicked button '%s' using JavaScript fallback%n", action.text());
+                            } else {
+                                System.out.printf("[Crawl] Browser: Failed to find/click button '%s'%n", action.text());
+                            }
                         }
                     }
                 } catch (Exception e) {
-                    System.out.printf("[Crawl] Browser: Error clicking button '%s': %s, trying JavaScript fallback%n", 
+                    System.out.printf("[Crawl] Browser: Error interacting with button '%s': %s, trying JavaScript fallback%n", 
                             action.text(), e.getMessage());
                     // Fallback: JavaScript로 클릭
                     try {
