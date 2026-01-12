@@ -804,6 +804,39 @@ public class WebCrawlerService {
         Set<LinkOut> links = new HashSet<>();
         String originalUrl = page.url();
         
+        // 클릭 전 현재 DOM의 링크 수집 (기준점)
+        Set<String> existingLinks = new HashSet<>();
+        try {
+            Object existing = page.evaluate("""
+                () => {
+                    const links = new Set();
+                    const baseUrl = window.location.origin;
+                    document.querySelectorAll('a[href]').forEach(a => {
+                        try {
+                            const href = a.href || a.getAttribute('href');
+                            if (href && typeof href === 'string' && 
+                                !href.startsWith('javascript:') && 
+                                !href.startsWith('#') && 
+                                href !== '') {
+                                const url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
+                                links.add(url.split('#')[0]); // fragment 제거
+                            }
+                        } catch (e) {}
+                    });
+                    return Array.from(links);
+                }
+            """);
+            if (existing instanceof List<?>) {
+                for (Object url : (List<?>) existing) {
+                    if (url instanceof String) {
+                        existingLinks.add((String) url);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // 무시
+        }
+        
         // 최대 10개까지만 클릭 (시간 제한)
         int maxClicks = Math.min(ctas.size(), 10);
         
@@ -817,9 +850,6 @@ public class WebCrawlerService {
             }
             
             try {
-                // 현재 URL 저장
-                String beforeUrl = page.url();
-                
                 // 요소 찾기 및 클릭
                 try {
                     page.locator(selector).first().click();
@@ -830,9 +860,10 @@ public class WebCrawlerService {
                     continue;
                 }
                 
-                // 네비게이션 완료 대기
+                // DOM 변경 완료 대기
+                page.waitForTimeout(1000);
                 try {
-                    page.waitForLoadState(LoadState.NETWORKIDLE, new Page.WaitForLoadStateOptions().setTimeout(3000));
+                    page.waitForLoadState(LoadState.NETWORKIDLE, new Page.WaitForLoadStateOptions().setTimeout(2000));
                 } catch (Exception e) {
                     // 타임아웃되어도 계속
                 }
@@ -840,30 +871,62 @@ public class WebCrawlerService {
                 
                 // URL 변경 확인
                 String afterUrl = page.url();
-                if (!afterUrl.equals(beforeUrl) && !afterUrl.equals(originalUrl)) {
-                    // 새로운 URL 발견
+                if (!afterUrl.equals(originalUrl)) {
                     try {
                         java.net.URI uri = java.net.URI.create(afterUrl);
-                        // fragment 제거
                         String cleanUrl = new java.net.URI(uri.getScheme(), uri.getUserInfo(), uri.getHost(), uri.getPort(), 
                                 uri.getPath(), uri.getQuery(), null).toString();
-                        
                         if (cleanUrl.startsWith("http://") || cleanUrl.startsWith("https://")) {
                             links.add(new LinkOut(cleanUrl, text));
-                            System.out.printf("[Crawl] Browser: Discovered link by clicking '%s': %s%n", text, cleanUrl);
+                            System.out.printf("[Crawl] Browser: Discovered link by clicking '%s': %s (URL changed)%n", text, cleanUrl);
                         }
                     } catch (Exception e) {
                         // URL 파싱 실패
                     }
                 }
                 
-                // 원래 페이지로 돌아가기 (뒤로 가기)
+                // DOM에서 새로 나타난 링크 추출
+                try {
+                    Object newLinks = page.evaluate("""
+                        () => {
+                            const links = new Set();
+                            const baseUrl = window.location.origin;
+                            document.querySelectorAll('a[href]').forEach(a => {
+                                try {
+                                    const href = a.href || a.getAttribute('href');
+                                    if (href && typeof href === 'string' && 
+                                        !href.startsWith('javascript:') && 
+                                        !href.startsWith('#') && 
+                                        href !== '') {
+                                        const url = href.startsWith('http') ? href : new URL(href, baseUrl).href;
+                                        links.add(url.split('#')[0]); // fragment 제거
+                                    }
+                                } catch (e) {}
+                            });
+                            return Array.from(links);
+                        }
+                    """);
+                    if (newLinks instanceof List<?>) {
+                        for (Object urlObj : (List<?>) newLinks) {
+                            if (urlObj instanceof String) {
+                                String url = (String) urlObj;
+                                if (!existingLinks.contains(url) && !url.equals(originalUrl.split("#")[0])) {
+                                    links.add(new LinkOut(url, text + " (submenu)"));
+                                    System.out.printf("[Crawl] Browser: Discovered link after clicking '%s': %s (new DOM element)%n", text, url);
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    // 무시
+                }
+                
+                // 원래 페이지로 돌아가기 (URL이 변경된 경우)
                 if (!afterUrl.equals(originalUrl)) {
                     try {
                         page.goBack(new Page.GoBackOptions().setTimeout(3000));
                         page.waitForLoadState(LoadState.DOMCONTENTLOADED);
-                        page.waitForLoadState(LoadState.NETWORKIDLE, new Page.WaitForLoadStateOptions().setTimeout(3000));
-                        page.waitForTimeout(500);
+                        page.waitForTimeout(1000);
                     } catch (Exception e) {
                         // 뒤로 가기 실패 시 원래 URL로 직접 이동
                         try {
