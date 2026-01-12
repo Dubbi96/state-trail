@@ -1303,7 +1303,8 @@ public class WebCrawlerService {
                                 String textEscaped2 = itemText.replace("\\", "\\\\").replace("\"", "\\\"");
                                 String accordionTextEscaped = accordionText.replace("\\", "\\\\").replace("\"", "\\\"");
                                 
-                                // JavaScript로 아코디언 패널 내부의 요소 찾아서 클릭
+                                // JavaScript로 아코디언 패널 내부의 Stack 요소 찾아서 클릭
+                                // Lnb.tsx 구조: Stack > Typography (텍스트) > onClick={navigate(path)}
                                 Object clickResult = page.evaluate(String.format("""
                                     () => {
                                         const itemText = "%s";
@@ -1333,12 +1334,50 @@ public class WebCrawlerService {
                                         
                                         if (!accordionPanel) return { found: false, clicked: false };
                                         
-                                        // 패널 내부에서 텍스트로 요소 찾기
-                                        const allElements = accordionPanel.querySelectorAll('*');
+                                        // AccordionDetails 내부에서 찾기
+                                        const accordionDetails = accordionPanel.querySelector('.MuiAccordionDetails-root, [class*="AccordionDetails"]');
+                                        const searchContainer = accordionDetails || accordionPanel;
+                                        
+                                        // Stack 요소들을 찾기 (React Router navigate 사용)
+                                        const stackElements = searchContainer.querySelectorAll('[class*="MuiStack-root"]');
+                                        for (const stack of stackElements) {
+                                            // Stack 내부의 Typography에서 텍스트 확인
+                                            const typography = stack.querySelector('[class*="MuiTypography-root"]');
+                                            let stackText = '';
+                                            if (typography) {
+                                                stackText = (typography.innerText || typography.textContent || '').trim();
+                                            } else {
+                                                stackText = (stack.innerText || stack.textContent || '').trim();
+                                            }
+                                            
+                                            if (stackText === itemText) {
+                                                // 클릭 가능한 요소인지 확인 (cursor: pointer)
+                                                const style = window.getComputedStyle(stack);
+                                                const isClickable = style.cursor === 'pointer' || 
+                                                                   stack.onclick !== null ||
+                                                                   stack.getAttribute('onclick') !== null ||
+                                                                   stack.style.cursor === 'pointer';
+                                                
+                                                if (isClickable && stack.offsetParent !== null) {
+                                                    // 클릭 실행
+                                                    stack.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                                    stack.focus();
+                                                    stack.click();
+                                                    
+                                                    // 추가로 이벤트 트리거
+                                                    const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+                                                    stack.dispatchEvent(clickEvent);
+                                                    
+                                                    return { found: true, clicked: true };
+                                                }
+                                            }
+                                        }
+                                        
+                                        // Stack을 못 찾은 경우, 일반 요소에서 찾기
+                                        const allElements = searchContainer.querySelectorAll('*');
                                         for (const el of allElements) {
                                             const elText = (el.innerText || el.textContent || '').trim();
                                             if (elText === itemText) {
-                                                // 클릭 가능한 요소인지 확인
                                                 const style = window.getComputedStyle(el);
                                                 const isClickable = style.cursor === 'pointer' || 
                                                                    el.onclick !== null ||
@@ -1347,15 +1386,11 @@ public class WebCrawlerService {
                                                                    el.style.cursor === 'pointer';
                                                 
                                                 if (isClickable && el.offsetParent !== null) {
-                                                    // 클릭 실행
                                                     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                                                     el.focus();
                                                     el.click();
-                                                    
-                                                    // 추가로 이벤트 트리거
                                                     const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
                                                     el.dispatchEvent(clickEvent);
-                                                    
                                                     return { found: true, clicked: true };
                                                 }
                                             }
