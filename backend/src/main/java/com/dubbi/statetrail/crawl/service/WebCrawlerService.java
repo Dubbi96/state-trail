@@ -1026,6 +1026,14 @@ public class WebCrawlerService {
                         discoveredLinks.addAll(aggressiveLinks);
                         System.out.printf("[Crawl] Browser: Found %d links with aggressive extraction%n", aggressiveLinks.size());
                     }
+                    
+                    // 아코디언 내부의 클릭 가능한 요소를 직접 클릭하여 페이지로 이동
+                    if (accordionLinks.isEmpty() && newLinksCount > 0) {
+                        System.out.printf("[Crawl] Browser: Trying to click items inside accordion '%s' to discover links...%n", action.text());
+                        List<LinkOut> clickedLinks = clickItemsInAccordionAndExtractLinks(page, action.text());
+                        discoveredLinks.addAll(clickedLinks);
+                        System.out.printf("[Crawl] Browser: Found %d links by clicking items in accordion%n", clickedLinks.size());
+                    }
                 }
                 
                 return new StateChangeResult(true, afterUrl, afterDomHash, newUiSignature, discoveredLinks);
