@@ -157,7 +157,10 @@ public class WebCrawlerService {
             try {
                 if (browserMode) {
                     playwright = Playwright.create();
-                    browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(true));
+                    // headless=false로 설정하여 실제 브라우저 창을 띄워 상태 변화를 더 정확히 감지
+                    browser = playwright.chromium().launch(new BrowserType.LaunchOptions()
+                            .setHeadless(false)
+                            .setSlowMo(100)); // 100ms 지연으로 디버깅 용이
                     
                     // Auth 컨텍스트 주입
                     if (run.getAuthProfile() != null) {
@@ -195,7 +198,20 @@ public class WebCrawlerService {
                     } else {
                         context = browser.newContext();
                     }
+                    
+                    // 브라우저 컨텍스트 옵션 설정 (더 나은 상태 감지를 위해)
+                    BrowserContext.NewContextOptions contextOptions = new BrowserContext.NewContextOptions()
+                            .setViewportSize(1280, 720)
+                            .setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+                    
+                    if (context == null) {
+                        context = browser.newContext(contextOptions);
+                    }
+                    
                     page = context.newPage();
+                    
+                    // 디버깅을 위한 로깅
+                    System.out.printf("[Crawl] Browser launched in non-headless mode (visible window)%n");
                     
                     // SCRIPT_LOGIN 타입인 경우 로그인 스크립트 실행
                     if (run.getAuthProfile() != null && page != null) {
