@@ -54,6 +54,21 @@ public class StorageStateCaptureService {
      */
     public void startCaptureSession(UUID authProfileId, String loginUrl) {
         try {
+            // 기존 세션이 있으면 먼저 취소
+            SessionInfo existingSession = activeSessions.remove(authProfileId);
+            if (existingSession != null) {
+                try {
+                    if (existingSession.browser != null) {
+                        existingSession.browser.close();
+                    }
+                    if (existingSession.playwright != null) {
+                        existingSession.playwright.close();
+                    }
+                } catch (Exception e) {
+                    // 기존 세션 정리 실패는 무시
+                }
+            }
+            
             Playwright playwright = Playwright.create();
             // 헤드리스 모드 끄기 (사용자가 로그인할 수 있도록)
             Browser browser = playwright.chromium().launch(
@@ -62,8 +77,10 @@ public class StorageStateCaptureService {
             BrowserContext context = browser.newContext();
             Page page = context.newPage();
             
-            // 로그인 페이지로 이동
-            page.navigate(loginUrl);
+            // 로그인 페이지로 이동 (타임아웃 설정)
+            page.navigate(loginUrl, new Page.NavigateOptions().setTimeout(30000));
+            page.waitForLoadState(LoadState.DOMCONTENTLOADED);
+            
             System.out.printf("[StorageStateCapture] Opened browser for auth profile %s at %s%n", 
                     authProfileId, loginUrl);
             
