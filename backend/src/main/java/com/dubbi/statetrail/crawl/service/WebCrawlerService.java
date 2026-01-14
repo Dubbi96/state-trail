@@ -451,6 +451,11 @@ public class WebCrawlerService {
         }
     }
 
+    /**
+     * 정적 링크 임계값: 정적 링크가 이 값보다 적으면 액션 기반 탐색 수행
+     */
+    private static final int STATIC_LINK_THRESHOLD = 3;
+    
     private record LinkOut(String href, String anchorText) {}
     
     /**
@@ -581,12 +586,23 @@ public class WebCrawlerService {
         Set<LinkOut> staticLinks = extractStaticLinks(page);
         links.addAll(staticLinks);
         
-        // 2. 정적 링크가 없거나 적으면, 액션 기반 탐색 수행
-        if (staticLinks.isEmpty()) {
-            System.out.println("[Crawl] Browser: No static links found, switching to action-based exploration");
-            
-            // 액션 후보 추출
-            List<ActionCandidate> actions = extractActionsFromUiSignature(uiSignature);
+        // 2. 액션 후보 추출 (항상 수행)
+        List<ActionCandidate> actions = extractActionsFromUiSignature(uiSignature);
+        List<ActionCandidate> navigationActions = actions.stream()
+            .filter(a -> a.priority() == 1)
+            .toList();
+        
+        // 3. 정적 링크가 임계값보다 적거나, priority=1(네비게이션 가능성 높은) 액션이 존재하면 액션 기반 탐색 수행
+        boolean shouldPerformActionExploration = staticLinks.size() < STATIC_LINK_THRESHOLD || !navigationActions.isEmpty();
+        
+        if (shouldPerformActionExploration) {
+            if (staticLinks.size() >= STATIC_LINK_THRESHOLD) {
+                System.out.printf("[Crawl] Browser: Static links (%d) >= threshold (%d), but navigation actions (%d) found, performing action-based exploration%n", 
+                        staticLinks.size(), STATIC_LINK_THRESHOLD, navigationActions.size());
+            } else {
+                System.out.printf("[Crawl] Browser: Static links (%d) < threshold (%d), switching to action-based exploration%n", 
+                        staticLinks.size(), STATIC_LINK_THRESHOLD);
+            }
             System.out.printf("[Crawl] Browser: Extracted %d action candidates%n", actions.size());
             
             // 현재 상태 저장
@@ -595,11 +611,6 @@ public class WebCrawlerService {
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> currentCTAs = (List<Map<String, Object>>) uiSignature.getOrDefault("ctas", List.of());
             int currentCTACount = currentCTAs.size();
-            
-            // 우선순위별로 액션 실행 (아코디언/메뉴 우선)
-            List<ActionCandidate> navigationActions = actions.stream()
-                .filter(a -> a.priority() == 1)
-                .toList();
             
             System.out.printf("[Crawl] Browser: Found %d priority-1 (navigation) actions out of %d total actions%n", 
                     navigationActions.size(), actions.size());

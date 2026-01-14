@@ -71,12 +71,18 @@ public class UiSignatureExtractor {
             Object result = page.evaluate("""
                 () => {
                     const ctas = [];
-                    // 버튼과 링크 요소 추출
-                    document.querySelectorAll('button, a[href], [role="button"], [role="link"]').forEach(el => {
+                    const seenTexts = new Set();
+                    
+                    // 1. 기본 버튼과 링크 요소 추출
+                    document.querySelectorAll('button, a[href], [role="button"], [role="link"], [role="menuitem"]').forEach(el => {
                         const text = (el.innerText || el.textContent || '').trim();
                         const type = el.tagName.toLowerCase();
-                        const href = el.getAttribute('href');
+                        const href = el.getAttribute('href') || el.getAttribute('data-href') || el.getAttribute('data-to') || el.getAttribute('data-path');
+                        
+                        // 중복 제거 (동일한 텍스트가 이미 있으면 스킵)
+                        if (text.length > 0 && seenTexts.has(text)) return;
                         if (text.length > 0 || href) {
+                            seenTexts.add(text);
                             ctas.push({
                                 type: type,
                                 text: text.slice(0, 100),
@@ -85,12 +91,87 @@ public class UiSignatureExtractor {
                             });
                         }
                     });
+                    
+                    // 2. SPA 네비게이션 패턴: data-to, data-href, data-path 속성
+                    document.querySelectorAll('[data-to], [data-href], [data-path]').forEach(el => {
+                        const text = (el.innerText || el.textContent || '').trim();
+                        const href = el.getAttribute('data-to') || el.getAttribute('data-href') || el.getAttribute('data-path');
+                        if (!seenTexts.has(text) && text.length > 0) {
+                            seenTexts.add(text);
+                            ctas.push({
+                                type: el.tagName.toLowerCase(),
+                                text: text.slice(0, 100),
+                                href: href || null,
+                                selector: generateSelector(el)
+                            });
+                        }
+                    });
+                    
+                    // 3. cursor:pointer인 클릭 가능한 요소 (MUI Stack/div 기반 메뉴 대응)
+                    // 단, 너무 큰 컨테이너는 제외 (화면의 50% 이상 덮는 요소 제외)
+                    const viewportWidth = window.innerWidth;
+                    const viewportHeight = window.innerHeight;
+                    const viewportArea = viewportWidth * viewportHeight;
+                    const thresholdArea = viewportArea * 0.5;
+                    
+                    document.querySelectorAll('*').forEach(el => {
+                        // 이미 처리한 요소는 스킵
+                        if (el.tagName === 'BUTTON' || el.tagName === 'A' || el.getAttribute('role') === 'button' || el.getAttribute('role') === 'link' || el.getAttribute('role') === 'menuitem') {
+                            return;
+                        }
+                        
+                        // data 속성이 이미 처리되었으면 스킵
+                        if (el.hasAttribute('data-to') || el.hasAttribute('data-href') || el.hasAttribute('data-path')) {
+                            return;
+                        }
+                        
+                        const style = window.getComputedStyle(el);
+                        const cursor = style.cursor;
+                        const display = style.display;
+                        const visibility = style.visibility;
+                        const opacity = parseFloat(style.opacity) || 1;
+                        
+                        // cursor:pointer이고 보이는 요소만
+                        if (cursor === 'pointer' && 
+                            display !== 'none' && 
+                            visibility !== 'hidden' && 
+                            opacity > 0 &&
+                            el.offsetParent !== null) {
+                            
+                            // 너무 큰 컨테이너는 제외
+                            const rect = el.getBoundingClientRect();
+                            const area = rect.width * rect.height;
+                            if (area > thresholdArea) {
+                                return;
+                            }
+                            
+                            const text = (el.innerText || el.textContent || '').trim();
+                            // 텍스트가 있고, 중복이 아니고, 의미있는 텍스트인 경우만 (너무 짧거나 긴 것 제외)
+                            if (text.length >= 2 && text.length <= 200 && !seenTexts.has(text)) {
+                                // nav/aside/drawer 하위 요소에 가중치 (네비게이션 가능성 높음)
+                                const isInNav = el.closest('nav, aside, [role="navigation"], [role="complementary"], [class*="Drawer"], [class*="Sidebar"], [class*="Lnb"]') !== null;
+                                
+                                seenTexts.add(text);
+                                ctas.push({
+                                    type: el.tagName.toLowerCase(),
+                                    text: text.slice(0, 100),
+                                    href: null, // cursor:pointer는 href가 없을 수 있음
+                                    selector: generateSelector(el)
+                                });
+                            }
+                        }
+                    });
+                    
                     return ctas;
                 }
                 function generateSelector(el) {
+                    // id → data-testid → aria-label → 안정 클래스 순으로 선택자 생성
                     if (el.id) return '#' + el.id;
+                    if (el.getAttribute('data-testid')) return '[data-testid="' + el.getAttribute('data-testid') + '"]';
+                    if (el.getAttribute('aria-label')) return '[aria-label="' + el.getAttribute('aria-label') + '"]';
                     if (el.className) {
-                        const classes = el.className.split(' ').filter(c => c).slice(0, 2).join('.');
+                        // 해시 클래스(css-xxxx) 제외하고 안정 클래스만 사용
+                        const classes = el.className.split(' ').filter(c => c && !c.match(/^css-[a-z0-9]+$/)).slice(0, 2).join('.');
                         if (classes) return el.tagName.toLowerCase() + '.' + classes;
                     }
                     return el.tagName.toLowerCase();
